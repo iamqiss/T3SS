@@ -1,0 +1,12 @@
+📄 LICENSE – PROPRIETARY AND CONFIDENTIAL
+
+Project: T3SS
+Copyright (c) 2025 Qiss Labs. All Rights Reserved.
+
+NOTICE: This software, including all source code, binaries, documentation, and related materials (collectively, the "Software"), is the exclusive property of Qiss Labs and is confidential and proprietary.  
+
+Unauthorized access, reproduction, distribution, modification, or use of this Software, in whole or in part, without the express written consent of Qiss Labs, is strictly prohibited and may result in severe civil and criminal penalties.  
+
+All rights, title, and interest in and to the Software remain solely with Qiss Labs. Any permitted use is governed by the terms set forth in a separate written agreement with Qiss Labs.
+
+By accessing or using this Software, you acknowledge that you have read, understood, and agree to abide by these terms.
