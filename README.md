@@ -69,7 +69,7 @@ You must have the following tools installed on your system:
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/your-org/T3SS.git](https://github.com/your-org/T3SS.git)
+    git clone [https://github.com/iamqiss/T3SS.git](https://github.com/iamqiss/T3SS.git)
     cd T3SS
     ```
 
