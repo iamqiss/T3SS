@@ -1,0 +1,511 @@
+# T3SS Project
+# File: infrastructure/monitoring/prometheus-config.yaml
+# (c) 2025 Qiss Labs. All Rights Reserved.
+# Unauthorized copying or distribution of this file is strictly prohibited.
+# For internal use only.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 't3ss-production'
+    environment: 'production'
+
+rule_files:
+  - "/etc/prometheus/rules/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Kubernetes API server
+  - job_name: 'kubernetes-apiservers'
+    kubernetes_sd_configs:
+      - role: endpoints
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: default;kubernetes;https
+
+  # Kubernetes nodes
+  - job_name: 'kubernetes-nodes'
+    kubernetes_sd_configs:
+      - role: node
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics
+
+  # Kubernetes pods
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - action: labelmap
+        regex: __meta_kubernetes_pod_label_(.+)
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: kubernetes_pod_name
+
+  # T3SS Crawler metrics
+  - job_name: 't3ss-crawler'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - t3ss
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: t3ss-crawler-service
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: http
+    metrics_path: /metrics
+    scrape_interval: 5s
+
+  # T3SS Indexer metrics
+  - job_name: 't3ss-indexer'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - t3ss
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: t3ss-indexer-service
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: http
+    metrics_path: /metrics
+    scrape_interval: 5s
+
+  # T3SS Query Engine metrics
+  - job_name: 't3ss-query-engine'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - t3ss
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: t3ss-query-engine-service
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: http
+    metrics_path: /metrics
+    scrape_interval: 1s  # High frequency for query metrics
+
+  # T3SS ML Ranker metrics
+  - job_name: 't3ss-ml-ranker'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - t3ss
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: t3ss-ml-ranker-service
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: http
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  # T3SS Vector Search metrics
+  - job_name: 't3ss-vector-search'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - t3ss
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: t3ss-vector-search-service
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: http
+    metrics_path: /metrics
+    scrape_interval: 5s
+
+  # T3SS Cache metrics
+  - job_name: 't3ss-cache'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - t3ss
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: t3ss-cache-service
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: http
+    metrics_path: /metrics
+    scrape_interval: 1s  # High frequency for cache metrics
+
+  # T3SS Frontend metrics
+  - job_name: 't3ss-frontend'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - t3ss
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: t3ss-frontend-service
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: http
+    metrics_path: /metrics
+    scrape_interval: 5s
+
+  # Node Exporter for system metrics
+  - job_name: 'node-exporter'
+    kubernetes_sd_configs:
+      - role: endpoints
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: node-exporter
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: metrics
+
+  # cAdvisor for container metrics
+  - job_name: 'cadvisor'
+    kubernetes_sd_configs:
+      - role: node
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+  # GPU metrics (if available)
+  - job_name: 'gpu-metrics'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - t3ss
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: t3ss-ml-ranker-service|t3ss-vector-search-service
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: gpu-metrics
+    metrics_path: /gpu-metrics
+    scrape_interval: 10s
+
+  # Database metrics (if using external databases)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # Load balancer metrics
+  - job_name: 'nginx-ingress'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - ingress-nginx
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        action: keep
+        regex: ingress-nginx-controller-metrics
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: metrics
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  # Custom application metrics
+  - job_name: 't3ss-custom-metrics'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - t3ss
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+    scrape_interval: 15s
+
+# Recording rules for performance optimization
+recording_rules:
+  - name: t3ss_performance
+    rules:
+      # Query performance metrics
+      - record: t3ss:query_latency_p99
+        expr: histogram_quantile(0.99, rate(t3ss_query_duration_seconds_bucket[5m]))
+      
+      - record: t3ss:query_latency_p95
+        expr: histogram_quantile(0.95, rate(t3ss_query_duration_seconds_bucket[5m]))
+      
+      - record: t3ss:query_latency_p50
+        expr: histogram_quantile(0.50, rate(t3ss_query_duration_seconds_bucket[5m]))
+      
+      # Cache hit rates
+      - record: t3ss:cache_hit_rate
+        expr: rate(t3ss_cache_hits_total[5m]) / (rate(t3ss_cache_hits_total[5m]) + rate(t3ss_cache_misses_total[5m]))
+      
+      # Crawler performance
+      - record: t3ss:crawler_throughput
+        expr: rate(t3ss_crawler_pages_crawled_total[5m])
+      
+      # Indexer performance
+      - record: t3ss:indexer_throughput
+        expr: rate(t3ss_indexer_documents_indexed_total[5m])
+      
+      # ML model performance
+      - record: t3ss:ml_model_accuracy
+        expr: t3ss_ml_model_accuracy
+      
+      # Vector search performance
+      - record: t3ss:vector_search_latency
+        expr: histogram_quantile(0.95, rate(t3ss_vector_search_duration_seconds_bucket[5m]))
+      
+      # System resource utilization
+      - record: t3ss:cpu_utilization
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+      
+      - record: t3ss:memory_utilization
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
+      
+      - record: t3ss:gpu_utilization
+        expr: nvidia_smi_utilization_gpu_ratio * 100
+      
+      # Auto-scaling metrics
+      - record: t3ss:pod_count
+        expr: count by (namespace, deployment) (kube_pod_info{namespace="t3ss"})
+      
+      - record: t3ss:request_rate
+        expr: rate(nginx_ingress_controller_requests[5m])
+
+# Alerting rules for proactive monitoring
+alerting_rules:
+  - name: t3ss_alerts
+    rules:
+      # High query latency
+      - alert: HighQueryLatency
+        expr: t3ss:query_latency_p95 > 1.0
+        for: 2m
+        labels:
+          severity: warning
+          service: query-engine
+        annotations:
+          summary: "High query latency detected"
+          description: "95th percentile query latency is {{ $value }}s, which is above the 1s threshold"
+      
+      # Low cache hit rate
+      - alert: LowCacheHitRate
+        expr: t3ss:cache_hit_rate < 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: cache
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }}, which is below the 80% threshold"
+      
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(t3ss_http_requests_total{status=~"5.."}[5m]) / rate(t3ss_http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          service: all
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }}, which is above the 5% threshold"
+      
+      # High CPU utilization
+      - alert: HighCPUUtilization
+        expr: t3ss:cpu_utilization > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High CPU utilization"
+          description: "CPU utilization is {{ $value }}%, which is above the 80% threshold"
+      
+      # High memory utilization
+      - alert: HighMemoryUtilization
+        expr: t3ss:memory_utilization > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High memory utilization"
+          description: "Memory utilization is {{ $value }}%, which is above the 85% threshold"
+      
+      # GPU utilization issues
+      - alert: HighGPUUtilization
+        expr: t3ss:gpu_utilization > 90
+        for: 5m
+        labels:
+          severity: warning
+          service: gpu
+        annotations:
+          summary: "High GPU utilization"
+          description: "GPU utilization is {{ $value }}%, which is above the 90% threshold"
+      
+      # Service down
+      - alert: ServiceDown
+        expr: up{job=~"t3ss-.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: all
+        annotations:
+          summary: "Service is down"
+          description: "Service {{ $labels.job }} is down"
+      
+      # Pod restarting frequently
+      - alert: PodRestartingFrequently
+        expr: rate(kube_pod_container_status_restarts_total[15m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: kubernetes
+        annotations:
+          summary: "Pod restarting frequently"
+          description: "Pod {{ $labels.pod }} is restarting frequently ({{ $value }} restarts per second)"
+      
+      # Disk space low
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+          service: system
+        annotations:
+          summary: "Disk space low"
+          description: "Disk space is {{ $value | humanizePercentage }} available on {{ $labels.instance }}"
+      
+      # Network errors
+      - alert: NetworkErrors
+        expr: rate(node_network_receive_errs_total[5m]) + rate(node_network_transmit_errs_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: network
+        annotations:
+          summary: "Network errors detected"
+          description: "Network error rate is {{ $value }} errors per second on {{ $labels.instance }}"
+      
+      # ML model accuracy degradation
+      - alert: MLModelAccuracyDegradation
+        expr: t3ss:ml_model_accuracy < 0.85
+        for: 10m
+        labels:
+          severity: warning
+          service: ml-ranker
+        annotations:
+          summary: "ML model accuracy degradation"
+          description: "ML model accuracy is {{ $value | humanizePercentage }}, which is below the 85% threshold"
+      
+      # Vector search latency issues
+      - alert: VectorSearchLatencyHigh
+        expr: t3ss:vector_search_latency > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          service: vector-search
+        annotations:
+          summary: "Vector search latency high"
+          description: "Vector search latency is {{ $value }}s, which is above the 0.5s threshold"
+      
+      # Crawler throughput low
+      - alert: CrawlerThroughputLow
+        expr: t3ss:crawler_throughput < 100
+        for: 10m
+        labels:
+          severity: warning
+          service: crawler
+        annotations:
+          summary: "Crawler throughput low"
+          description: "Crawler throughput is {{ $value }} pages per second, which is below the 100 pages/s threshold"
+      
+      # Indexer throughput low
+      - alert: IndexerThroughputLow
+        expr: t3ss:indexer_throughput < 50
+        for: 10m
+        labels:
+          severity: warning
+          service: indexer
+        annotations:
+          summary: "Indexer throughput low"
+          description: "Indexer throughput is {{ $value }} documents per second, which is below the 50 docs/s threshold"

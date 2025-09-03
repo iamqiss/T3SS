@@ -1,0 +1,563 @@
+# T3SS Project
+# File: infrastructure/config/performance-optimization.yaml
+# (c) 2025 Qiss Labs. All Rights Reserved.
+# Unauthorized copying or distribution of this file is strictly prohibited.
+# For internal use only.
+
+# T3SS Performance Optimization Configuration
+# This configuration file contains all performance tuning parameters
+# to make T3SS faster than Google at everything
+
+# Global performance settings
+global:
+  environment: "production"
+  log_level: "info"
+  enable_profiling: true
+  enable_metrics: true
+  enable_tracing: true
+  
+# Crawler performance optimization
+crawler:
+  # High-performance HTTP client settings
+  http_client:
+    max_concurrent_requests: 1000
+    request_timeout: "30s"
+    max_retries: 3
+    rate_limit_per_second: 100
+    user_agent: "T3SS-Crawler/1.0 (Ultra-Fast Search Engine)"
+    max_response_size: 10485760  # 10MB
+    enable_compression: true
+    keep_alive_timeout: "60s"
+    max_idle_connections: 2000
+    max_idle_connections_per_host: 100
+    idle_connection_timeout: "90s"
+    tls_handshake_timeout: "10s"
+    expect_continue_timeout: "1s"
+    response_header_timeout: "10s"
+  
+  # Connection pooling
+  connection_pool:
+    max_connections: 2000
+    max_connections_per_host: 100
+    connection_timeout: "10s"
+    keep_alive: true
+    keep_alive_timeout: "60s"
+  
+  # Scheduler optimization
+  scheduler:
+    max_concurrent_domains: 1000
+    max_jobs_per_domain: 10
+    default_delay: "1s"
+    max_queue_size: 1000000
+    enable_priority_scheduling: true
+    enable_domain_aware_scheduling: true
+    enable_adaptive_crawling: true
+  
+  # Politeness settings
+  politeness:
+    respect_robots: true
+    default_delay: "1s"
+    max_concurrent_per_domain: 5
+    robots_cache_ttl: "1h"
+    enable_rate_limiting: true
+    enable_domain_delay_adaptation: true
+
+# Indexer performance optimization
+indexer:
+  # Inverted index builder settings
+  inverted_index:
+    max_documents: 1000000
+    batch_size: 1000
+    enable_compression: true
+    enable_parallel_processing: true
+    max_term_length: 50
+    min_term_frequency: 1
+    field_weights:
+      title: 3.0
+      content: 1.0
+      url: 2.0
+      meta_description: 2.5
+      headings: 2.0
+  
+  # Document processing
+  document_processing:
+    enable_async_processing: true
+    max_concurrent_documents: 100
+    enable_batch_processing: true
+    batch_size: 1000
+    enable_streaming: true
+    enable_compression: true
+  
+  # Deduplication settings
+  deduplication:
+    min_content_length: 100
+    similarity_threshold: 0.8
+    cache_size: 100000
+    enable_similarity: true
+    enable_content_hashing: true
+    enable_url_hashing: true
+    enable_shingle_based_dedup: true
+    shingle_size: 3
+  
+  # Quality assessment
+  quality_assessment:
+    enable_content_quality_scoring: true
+    enable_spam_detection: true
+    enable_duplicate_detection: true
+    enable_language_detection: true
+    enable_sentiment_analysis: true
+    min_content_quality_score: 0.3
+    max_spam_score: 0.7
+
+# Query engine performance optimization
+query_engine:
+  # Query execution settings
+  execution:
+    enable_parallel_execution: true
+    enable_query_optimization: true
+    enable_result_caching: true
+    cache_size: 10000
+    max_results: 1000
+    max_query_length: 1000
+    enable_fuzzy_matching: true
+    fuzzy_threshold: 0.8
+    enable_phrase_matching: true
+    enable_wildcard_matching: true
+    enable_boolean_queries: true
+  
+  # Query planning
+  query_planning:
+    enable_cost_based_optimization: true
+    enable_parallel_term_lookup: true
+    enable_result_streaming: true
+    enable_early_termination: true
+    max_concurrent_terms: 100
+    enable_term_caching: true
+    term_cache_size: 50000
+  
+  # Result processing
+  result_processing:
+    enable_parallel_ranking: true
+    enable_result_deduplication: true
+    enable_snippet_generation: true
+    enable_highlighting: true
+    max_snippet_length: 200
+    enable_metadata_extraction: true
+    enable_facet_generation: true
+
+# Caching system optimization
+caching:
+  # Multi-layer cache settings
+  multi_layer_cache:
+    l1_cache:
+      size: 1000
+      ttl: "5m"
+      enable_compression: true
+      enable_metrics: true
+    
+    l2_cache:
+      size: 10000
+      ttl: "30m"
+      enable_compression: true
+      enable_metrics: true
+    
+    l3_cache:
+      size: 100000
+      ttl: "2h"
+      enable_compression: true
+      enable_metrics: true
+  
+  # Cache optimization
+  optimization:
+    enable_adaptive_ttl: true
+    enable_cache_warming: true
+    enable_cache_prefetching: true
+    enable_cache_compression: true
+    compression_algorithm: "lz4"
+    enable_cache_partitioning: true
+    partition_count: 16
+  
+  # Cache eviction
+  eviction:
+    strategy: "lru"
+    enable_ttl_eviction: true
+    enable_size_eviction: true
+    max_memory_usage: "8GB"
+    eviction_threshold: 0.8
+
+# ML ranking optimization
+ml_ranking:
+  # Model settings
+  models:
+    enable_xgboost: true
+    xgboost_estimators: 100
+    xgboost_depth: 6
+    xgboost_lr: 0.1
+    xgboost_subsample: 0.8
+    xgboost_colsample: 0.8
+    
+    enable_lightgbm: true
+    lightgbm_estimators: 100
+    lightgbm_depth: 6
+    lightgbm_lr: 0.1
+    lightgbm_subsample: 0.8
+    lightgbm_colsample: 0.8
+    
+    enable_random_forest: true
+    rf_estimators: 100
+    rf_depth: 10
+    
+    enable_linear: true
+    linear_alpha: 1.0
+  
+  # Training settings
+  training:
+    max_training_samples: 100000
+    min_training_samples: 1000
+    training_interval: "5m"
+    enable_online_learning: true
+    enable_incremental_learning: true
+    enable_model_validation: true
+    validation_split: 0.2
+    enable_early_stopping: true
+    early_stopping_patience: 10
+  
+  # Feature engineering
+  feature_engineering:
+    enable_real_time_features: true
+    enable_historical_features: true
+    enable_contextual_features: true
+    enable_user_features: true
+    enable_content_features: true
+    enable_interaction_features: true
+    max_feature_count: 1000
+    enable_feature_selection: true
+    enable_feature_scaling: true
+
+# Vector search optimization
+vector_search:
+  # Embedding model settings
+  embedding_model:
+    name: "sentence-transformers/all-MiniLM-L6-v2"
+    use_mixed_precision: true
+    gpu_memory_fraction: 0.8
+    use_gpu_index: true
+    batch_size: 32
+    max_sequence_length: 512
+    enable_model_caching: true
+    enable_embedding_caching: true
+  
+  # Vector index settings
+  vector_index:
+    type: "faiss"  # or "hnsw"
+    enable_gpu_acceleration: true
+    enable_compression: true
+    enable_quantization: true
+    quantization_type: "pq"  # Product Quantization
+    enable_index_optimization: true
+    rebuild_interval: "24h"
+  
+  # Search optimization
+  search:
+    enable_batch_search: true
+    batch_size: 100
+    enable_parallel_search: true
+    max_concurrent_searches: 50
+    enable_result_caching: true
+    cache_size: 10000
+    enable_similarity_thresholding: true
+    min_similarity_threshold: 0.3
+  
+  # GPU optimization
+  gpu:
+    enable_multi_gpu: true
+    gpu_memory_pool_size: "8GB"
+    enable_gpu_memory_pool: true
+    enable_gpu_streaming: true
+    max_gpu_streams: 4
+
+# Database optimization
+database:
+  # Connection settings
+  connections:
+    max_connections: 1000
+    min_connections: 10
+    connection_timeout: "30s"
+    idle_timeout: "10m"
+    max_lifetime: "1h"
+    enable_connection_pooling: true
+    enable_connection_health_checks: true
+  
+  # Query optimization
+  query_optimization:
+    enable_query_caching: true
+    cache_size: 10000
+    enable_prepared_statements: true
+    enable_query_planning: true
+    enable_index_hints: true
+    enable_parallel_queries: true
+    max_concurrent_queries: 100
+  
+  # Index optimization
+  indexing:
+    enable_automatic_indexing: true
+    enable_composite_indexes: true
+    enable_partial_indexes: true
+    enable_covering_indexes: true
+    enable_index_compression: true
+    rebuild_interval: "24h"
+
+# Network optimization
+network:
+  # TCP settings
+  tcp:
+    enable_tcp_nodelay: true
+    enable_tcp_keepalive: true
+    tcp_keepalive_time: "60s"
+    tcp_keepalive_interval: "10s"
+    tcp_keepalive_probes: 3
+    enable_tcp_fastopen: true
+    tcp_window_scaling: true
+  
+  # HTTP settings
+  http:
+    enable_http2: true
+    enable_compression: true
+    compression_level: 6
+    enable_gzip: true
+    enable_brotli: true
+    max_request_size: "100MB"
+    max_response_size: "100MB"
+    enable_keep_alive: true
+    keep_alive_timeout: "60s"
+    max_keep_alive_requests: 1000
+  
+  # Load balancing
+  load_balancing:
+    algorithm: "least_connections"
+    enable_health_checks: true
+    health_check_interval: "10s"
+    health_check_timeout: "5s"
+    enable_sticky_sessions: false
+    enable_circuit_breaker: true
+    circuit_breaker_threshold: 0.5
+    circuit_breaker_timeout: "30s"
+
+# Memory optimization
+memory:
+  # Garbage collection
+  garbage_collection:
+    enable_optimized_gc: true
+    gc_target_percentage: 80
+    gc_trigger_percentage: 90
+    enable_concurrent_gc: true
+    enable_parallel_gc: true
+    gc_workers: 4
+  
+  # Memory allocation
+  allocation:
+    enable_memory_pooling: true
+    pool_size: "2GB"
+    enable_memory_mapping: true
+    enable_zero_copy: true
+    enable_memory_compression: true
+    compression_algorithm: "lz4"
+  
+  # Memory monitoring
+  monitoring:
+    enable_memory_profiling: true
+    enable_memory_leak_detection: true
+    memory_usage_threshold: 0.8
+    enable_memory_alerts: true
+    memory_alert_threshold: 0.9
+
+# CPU optimization
+cpu:
+  # Threading
+  threading:
+    enable_work_stealing: true
+    thread_pool_size: 0  # 0 = auto-detect
+    io_thread_pool_size: 0
+    enable_thread_affinity: true
+    enable_cpu_pinning: true
+    cpu_mask: "0-15"  # Use first 16 cores
+  
+  # Parallel processing
+  parallel_processing:
+    enable_data_parallelism: true
+    enable_task_parallelism: true
+    enable_pipeline_parallelism: true
+    max_concurrent_tasks: 1000
+    enable_work_stealing: true
+    enable_load_balancing: true
+  
+  # CPU monitoring
+  monitoring:
+    enable_cpu_profiling: true
+    enable_cpu_affinity: true
+    cpu_usage_threshold: 0.8
+    enable_cpu_alerts: true
+    cpu_alert_threshold: 0.9
+
+# Storage optimization
+storage:
+  # File system
+  filesystem:
+    enable_async_io: true
+    enable_direct_io: true
+    enable_memory_mapped_files: true
+    enable_file_caching: true
+    cache_size: "1GB"
+    enable_compression: true
+    compression_algorithm: "lz4"
+  
+  # Disk I/O
+  disk_io:
+    enable_io_scheduling: true
+    io_scheduler: "deadline"
+    enable_io_priority: true
+    io_priority: "high"
+    enable_io_caching: true
+    cache_size: "2GB"
+    enable_io_prefetching: true
+  
+  # Storage monitoring
+  monitoring:
+    enable_io_profiling: true
+    enable_disk_usage_monitoring: true
+    disk_usage_threshold: 0.8
+    enable_io_alerts: true
+    io_alert_threshold: 0.9
+
+# Monitoring and observability
+monitoring:
+  # Metrics
+  metrics:
+    enable_prometheus_metrics: true
+    metrics_port: 9090
+    enable_custom_metrics: true
+    enable_business_metrics: true
+    metrics_retention: "30d"
+    enable_metrics_compression: true
+  
+  # Logging
+  logging:
+    log_level: "info"
+    enable_structured_logging: true
+    enable_json_logging: true
+    log_retention: "7d"
+    enable_log_compression: true
+    enable_log_rotation: true
+    max_log_size: "100MB"
+    max_log_files: 10
+  
+  # Tracing
+  tracing:
+    enable_distributed_tracing: true
+    trace_sampling_rate: 0.1
+    enable_trace_export: true
+    trace_export_endpoint: "jaeger:14268"
+    enable_trace_compression: true
+  
+  # Health checks
+  health_checks:
+    enable_liveness_probes: true
+    enable_readiness_probes: true
+    health_check_interval: "10s"
+    health_check_timeout: "5s"
+    enable_dependency_health_checks: true
+
+# Security optimization
+security:
+  # TLS/SSL
+  tls:
+    enable_tls: true
+    tls_version: "1.3"
+    enable_tls_compression: false
+    enable_tls_session_resumption: true
+    enable_tls_ocsp_stapling: true
+    enable_tls_sni: true
+  
+  # Authentication
+  authentication:
+    enable_jwt: true
+    jwt_expiry: "1h"
+    enable_refresh_tokens: true
+    refresh_token_expiry: "7d"
+    enable_rate_limiting: true
+    rate_limit_requests: 1000
+    rate_limit_window: "1m"
+  
+  # Authorization
+  authorization:
+    enable_rbac: true
+    enable_abac: true
+    enable_api_key_auth: true
+    enable_oauth2: true
+    enable_saml: true
+
+# Auto-scaling configuration
+autoscaling:
+  # Horizontal Pod Autoscaler
+  hpa:
+    enable_hpa: true
+    min_replicas: 5
+    max_replicas: 100
+    target_cpu_utilization: 70
+    target_memory_utilization: 80
+    scale_up_stabilization: "60s"
+    scale_down_stabilization: "300s"
+    enable_custom_metrics: true
+  
+  # Vertical Pod Autoscaler
+  vpa:
+    enable_vpa: true
+    update_mode: "Auto"
+    resource_policy:
+      cpu_min: "100m"
+      cpu_max: "2"
+      memory_min: "128Mi"
+      memory_max: "4Gi"
+  
+  # Cluster Autoscaler
+  cluster_autoscaler:
+    enable_cluster_autoscaler: true
+    min_nodes: 10
+    max_nodes: 100
+    scale_down_delay: "10m"
+    scale_down_unneeded_time: "10m"
+    enable_gpu_autoscaling: true
+
+# Performance targets
+performance_targets:
+  # Response time targets
+  response_times:
+    query_latency_p50: "100ms"
+    query_latency_p95: "500ms"
+    query_latency_p99: "1s"
+    cache_hit_latency: "1ms"
+    vector_search_latency: "50ms"
+    ml_ranking_latency: "10ms"
+  
+  # Throughput targets
+  throughput:
+    queries_per_second: 10000
+    documents_indexed_per_second: 1000
+    pages_crawled_per_second: 100
+    cache_operations_per_second: 100000
+  
+  # Resource utilization targets
+  resource_utilization:
+    cpu_utilization: 70
+    memory_utilization: 80
+    disk_utilization: 80
+    network_utilization: 70
+    gpu_utilization: 80
+  
+  # Quality targets
+  quality:
+    cache_hit_rate: 0.9
+    search_accuracy: 0.95
+    ml_model_accuracy: 0.9
+    system_availability: 0.999
+    error_rate: 0.001
