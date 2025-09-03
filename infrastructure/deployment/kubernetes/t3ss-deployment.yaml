@@ -1,0 +1,830 @@
+# T3SS Project
+# File: infrastructure/deployment/kubernetes/t3ss-deployment.yaml
+# (c) 2025 Qiss Labs. All Rights Reserved.
+# Unauthorized copying or distribution of this file is strictly prohibited.
+# For internal use only.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: t3ss
+  labels:
+    name: t3ss
+    environment: production
+
+---
+# High-performance crawler deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: t3ss-crawler
+  namespace: t3ss
+  labels:
+    app: t3ss-crawler
+    tier: crawler
+spec:
+  replicas: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 3
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: t3ss-crawler
+  template:
+    metadata:
+      labels:
+        app: t3ss-crawler
+        tier: crawler
+    spec:
+      containers:
+      - name: crawler
+        image: t3ss/crawler:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: MAX_CONCURRENT_REQUESTS
+          value: "1000"
+        - name: RATE_LIMIT_PER_SECOND
+          value: "100"
+        - name: REQUEST_TIMEOUT
+          value: "30s"
+        - name: ENABLE_COMPRESSION
+          value: "true"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+            ephemeral-storage: "10Gi"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+            ephemeral-storage: "20Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: crawler-data
+          mountPath: /data
+      volumes:
+      - name: crawler-data
+        persistentVolumeClaim:
+          claimName: crawler-data-pvc
+      nodeSelector:
+        node-type: high-performance
+      tolerations:
+      - key: "high-performance"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+---
+# Ultra-fast indexer deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: t3ss-indexer
+  namespace: t3ss
+  labels:
+    app: t3ss-indexer
+    tier: indexing
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: t3ss-indexer
+  template:
+    metadata:
+      labels:
+        app: t3ss-indexer
+        tier: indexing
+    spec:
+      containers:
+      - name: indexer
+        image: t3ss/indexer:latest
+        ports:
+        - containerPort: 8081
+        env:
+        - name: BATCH_SIZE
+          value: "1000"
+        - name: ENABLE_PARALLEL_PROCESSING
+          value: "true"
+        - name: ENABLE_COMPRESSION
+          value: "true"
+        - name: MAX_DOCUMENTS
+          value: "1000000"
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+            ephemeral-storage: "50Gi"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+            ephemeral-storage: "100Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: indexer-data
+          mountPath: /data
+        - name: shared-storage
+          mountPath: /shared
+      volumes:
+      - name: indexer-data
+        persistentVolumeClaim:
+          claimName: indexer-data-pvc
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: shared-storage-pvc
+      nodeSelector:
+        node-type: high-performance
+
+---
+# Blazing-fast query engine deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: t3ss-query-engine
+  namespace: t3ss
+  labels:
+    app: t3ss-query-engine
+    tier: querying
+spec:
+  replicas: 20
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 5
+      maxUnavailable: 2
+  selector:
+    matchLabels:
+      app: t3ss-query-engine
+  template:
+    metadata:
+      labels:
+        app: t3ss-query-engine
+        tier: querying
+    spec:
+      containers:
+      - name: query-engine
+        image: t3ss/query-engine:latest
+        ports:
+        - containerPort: 8082
+        env:
+        - name: ENABLE_PARALLEL_EXECUTION
+          value: "true"
+        - name: ENABLE_RESULT_CACHING
+          value: "true"
+        - name: CACHE_SIZE
+          value: "10000"
+        - name: MAX_RESULTS
+          value: "1000"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+            ephemeral-storage: "5Gi"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+            ephemeral-storage: "10Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8082
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8082
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: query-cache
+          mountPath: /cache
+        - name: shared-storage
+          mountPath: /shared
+      volumes:
+      - name: query-cache
+        emptyDir:
+          sizeLimit: 5Gi
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: shared-storage-pvc
+      nodeSelector:
+        node-type: high-performance
+
+---
+# ML ranking service deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: t3ss-ml-ranker
+  namespace: t3ss
+  labels:
+    app: t3ss-ml-ranker
+    tier: ranking
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: t3ss-ml-ranker
+  template:
+    metadata:
+      labels:
+        app: t3ss-ml-ranker
+        tier: ranking
+    spec:
+      containers:
+      - name: ml-ranker
+        image: t3ss/ml-ranker:latest
+        ports:
+        - containerPort: 8083
+        env:
+        - name: ENABLE_REAL_TIME_LEARNING
+          value: "true"
+        - name: MAX_TRAINING_SAMPLES
+          value: "100000"
+        - name: TRAINING_INTERVAL
+          value: "300"
+        - name: ENABLE_XGBOOST
+          value: "true"
+        - name: ENABLE_LIGHTGBM
+          value: "true"
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "4000m"
+            nvidia.com/gpu: 1
+            ephemeral-storage: "20Gi"
+          limits:
+            memory: "16Gi"
+            cpu: "8000m"
+            nvidia.com/gpu: 1
+            ephemeral-storage: "50Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8083
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8083
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        volumeMounts:
+        - name: ml-models
+          mountPath: /models
+        - name: training-data
+          mountPath: /training-data
+      volumes:
+      - name: ml-models
+        persistentVolumeClaim:
+          claimName: ml-models-pvc
+      - name: training-data
+        persistentVolumeClaim:
+          claimName: training-data-pvc
+      nodeSelector:
+        node-type: gpu-accelerated
+
+---
+# Vector search service deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: t3ss-vector-search
+  namespace: t3ss
+  labels:
+    app: t3ss-vector-search
+    tier: vector-search
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: t3ss-vector-search
+  template:
+    metadata:
+      labels:
+        app: t3ss-vector-search
+        tier: vector-search
+    spec:
+      containers:
+      - name: vector-search
+        image: t3ss/vector-search:latest
+        ports:
+        - containerPort: 8084
+        env:
+        - name: EMBEDDING_MODEL
+          value: "sentence-transformers/all-MiniLM-L6-v2"
+        - name: USE_MIXED_PRECISION
+          value: "true"
+        - name: GPU_MEMORY_FRACTION
+          value: "0.8"
+        - name: USE_GPU_INDEX
+          value: "true"
+        - name: BATCH_SIZE
+          value: "32"
+        resources:
+          requests:
+            memory: "16Gi"
+            cpu: "8000m"
+            nvidia.com/gpu: 2
+            ephemeral-storage: "50Gi"
+          limits:
+            memory: "32Gi"
+            cpu: "16000m"
+            nvidia.com/gpu: 2
+            ephemeral-storage: "100Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8084
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8084
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        volumeMounts:
+        - name: vector-index
+          mountPath: /index
+        - name: embedding-models
+          mountPath: /models
+      volumes:
+      - name: vector-index
+        persistentVolumeClaim:
+          claimName: vector-index-pvc
+      - name: embedding-models
+        persistentVolumeClaim:
+          claimName: embedding-models-pvc
+      nodeSelector:
+        node-type: gpu-accelerated
+
+---
+# Multi-layer cache service deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: t3ss-cache
+  namespace: t3ss
+  labels:
+    app: t3ss-cache
+    tier: caching
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: t3ss-cache
+  template:
+    metadata:
+      labels:
+        app: t3ss-cache
+        tier: caching
+    spec:
+      containers:
+      - name: cache
+        image: t3ss/cache:latest
+        ports:
+        - containerPort: 8085
+        env:
+        - name: L1_CACHE_SIZE
+          value: "1000"
+        - name: L2_CACHE_SIZE
+          value: "10000"
+        - name: L3_CACHE_SIZE
+          value: "100000"
+        - name: DEFAULT_TTL
+          value: "300"
+        - name: ENABLE_COMPRESSION
+          value: "true"
+        - name: ENABLE_METRICS
+          value: "true"
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+            ephemeral-storage: "20Gi"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+            ephemeral-storage: "50Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8085
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8085
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: cache-data
+          mountPath: /data
+      volumes:
+      - name: cache-data
+        persistentVolumeClaim:
+          claimName: cache-data-pvc
+      nodeSelector:
+        node-type: high-performance
+
+---
+# Frontend web UI deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: t3ss-frontend
+  namespace: t3ss
+  labels:
+    app: t3ss-frontend
+    tier: frontend
+spec:
+  replicas: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 3
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: t3ss-frontend
+  template:
+    metadata:
+      labels:
+        app: t3ss-frontend
+        tier: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: t3ss/frontend:latest
+        ports:
+        - containerPort: 80
+        env:
+        - name: API_BASE_URL
+          value: "https://api.t3ss.com"
+        - name: ENABLE_SSR
+          value: "true"
+        - name: ENABLE_PWA
+          value: "true"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+            ephemeral-storage: "1Gi"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+            ephemeral-storage: "2Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      nodeSelector:
+        node-type: standard
+
+---
+# Horizontal Pod Autoscaler for crawler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: t3ss-crawler-hpa
+  namespace: t3ss
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: t3ss-crawler
+  minReplicas: 5
+  maxReplicas: 50
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+
+---
+# Horizontal Pod Autoscaler for query engine
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: t3ss-query-engine-hpa
+  namespace: t3ss
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: t3ss-query-engine
+  minReplicas: 10
+  maxReplicas: 100
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 200
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+
+---
+# Horizontal Pod Autoscaler for frontend
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: t3ss-frontend-hpa
+  namespace: t3ss
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: t3ss-frontend
+  minReplicas: 5
+  maxReplicas: 50
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+
+---
+# Service definitions
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3ss-crawler-service
+  namespace: t3ss
+spec:
+  selector:
+    app: t3ss-crawler
+  ports:
+  - port: 80
+    targetPort: 8080
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3ss-indexer-service
+  namespace: t3ss
+spec:
+  selector:
+    app: t3ss-indexer
+  ports:
+  - port: 80
+    targetPort: 8081
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3ss-query-engine-service
+  namespace: t3ss
+spec:
+  selector:
+    app: t3ss-query-engine
+  ports:
+  - port: 80
+    targetPort: 8082
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3ss-ml-ranker-service
+  namespace: t3ss
+spec:
+  selector:
+    app: t3ss-ml-ranker
+  ports:
+  - port: 80
+    targetPort: 8083
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3ss-vector-search-service
+  namespace: t3ss
+spec:
+  selector:
+    app: t3ss-vector-search
+  ports:
+  - port: 80
+    targetPort: 8084
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3ss-cache-service
+  namespace: t3ss
+spec:
+  selector:
+    app: t3ss-cache
+  ports:
+  - port: 80
+    targetPort: 8085
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3ss-frontend-service
+  namespace: t3ss
+spec:
+  selector:
+    app: t3ss-frontend
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+
+---
+# Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: t3ss-ingress
+  namespace: t3ss
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/rate-limit: "1000"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+spec:
+  tls:
+  - hosts:
+    - t3ss.com
+    - www.t3ss.com
+    - api.t3ss.com
+    secretName: t3ss-tls
+  rules:
+  - host: t3ss.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: t3ss-frontend-service
+            port:
+              number: 80
+  - host: www.t3ss.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: t3ss-frontend-service
+            port:
+              number: 80
+  - host: api.t3ss.com
+    http:
+      paths:
+      - path: /search
+        pathType: Prefix
+        backend:
+          service:
+            name: t3ss-query-engine-service
+            port:
+              number: 80
+      - path: /vector
+        pathType: Prefix
+        backend:
+          service:
+            name: t3ss-vector-search-service
+            port:
+              number: 80
+      - path: /rank
+        pathType: Prefix
+        backend:
+          service:
+            name: t3ss-ml-ranker-service
+            port:
+              number: 80
