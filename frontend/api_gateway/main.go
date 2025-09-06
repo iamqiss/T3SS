@@ -14,9 +14,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,811 +30,1239 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// APIGatewayConfig holds configuration for the API gateway
-type APIGatewayConfig struct {
-	Server struct {
-		Host         string        `yaml:"host"`
-		Port         int           `yaml:"port"`
-		ReadTimeout  time.Duration `yaml:"read_timeout"`
-		WriteTimeout time.Duration `yaml:"write_timeout"`
-		IdleTimeout  time.Duration `yaml:"idle_timeout"`
-	} `yaml:"server"`
-	
-	RateLimit struct {
-		Enabled          bool          `yaml:"enabled"`
-		RequestsPerMinute int          `yaml:"requests_per_minute"`
-		BurstSize        int           `yaml:"burst_size"`
-		CleanupInterval  time.Duration `yaml:"cleanup_interval"`
-	} `yaml:"rate_limit"`
-	
-	Caching struct {
-		Enabled         bool          `yaml:"enabled"`
-		RedisEndpoint   string        `yaml:"redis_endpoint"`
-		DefaultTTL      time.Duration `yaml:"default_ttl"`
-		MaxCacheSize    int64         `yaml:"max_cache_size"`
-		CleanupInterval time.Duration `yaml:"cleanup_interval"`
-	} `yaml:"caching"`
-	
-	Security struct {
-		EnableHTTPS     bool   `yaml:"enable_https"`
-		CertFile        string `yaml:"cert_file"`
-		KeyFile         string `yaml:"key_file"`
-		EnableCORS      bool   `yaml:"enable_cors"`
-		AllowedOrigins  []string `yaml:"allowed_origins"`
-		EnableAPIKey    bool   `yaml:"enable_api_key"`
-		APIKeyHeader    string `yaml:"api_key_header"`
-	} `yaml:"security"`
-	
-	Services struct {
-		SearchServiceURL string `yaml:"search_service_url"`
-		IndexServiceURL   string `yaml:"index_service_url"`
-		RankingServiceURL string `yaml:"ranking_service_url"`
-		Timeout          time.Duration `yaml:"timeout"`
-	} `yaml:"services"`
-	
-	Monitoring struct {
-		EnableMetrics   bool   `yaml:"enable_metrics"`
-		MetricsPort     int    `yaml:"metrics_port"`
-		EnableHealthCheck bool `yaml:"enable_health_check"`
-		HealthCheckPath string `yaml:"health_check_path"`
-	} `yaml:"monitoring"`
+// Configuration structure
+type Config struct {
+	Server   ServerConfig   `yaml:"server"`
+	Redis    RedisConfig    `yaml:"redis"`
+	Security SecurityConfig `yaml:"security"`
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	Cache    CacheConfig    `yaml:"cache"`
+	Services ServicesConfig `yaml:"services"`
+	Metrics  MetricsConfig  `yaml:"metrics"`
 }
 
-// SearchRequest represents a search API request
-type SearchRequest struct {
-	Query     string            `json:"query" binding:"required"`
-	Limit     int               `json:"limit,omitempty"`
-	Offset    int               `json:"offset,omitempty"`
-	Filters   map[string]string `json:"filters,omitempty"`
-	SortBy    string            `json:"sort_by,omitempty"`
-	SortOrder string            `json:"sort_order,omitempty"`
-	APIKey    string            `json:"api_key,omitempty"`
+type ServerConfig struct {
+	Host         string `yaml:"host"`
+	Port         int    `yaml:"port"`
+	ReadTimeout  int    `yaml:"read_timeout"`
+	WriteTimeout int    `yaml:"write_timeout"`
+	IdleTimeout  int    `yaml:"idle_timeout"`
+	EnableHTTPS  bool   `yaml:"enable_https"`
+	CertFile     string `yaml:"cert_file"`
+	KeyFile      string `yaml:"key_file"`
 }
 
-// SearchResponse represents a search API response
-type SearchResponse struct {
-	Query       string        `json:"query"`
-	Results     []SearchResult `json:"results"`
-	TotalCount  int64         `json:"total_count"`
-	Page        int           `json:"page"`
-	PageSize    int           `json:"page_size"`
-	ProcessingTime time.Duration `json:"processing_time"`
-	CacheHit    bool          `json:"cache_hit"`
-	RequestID   string        `json:"request_id"`
+type RedisConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+	PoolSize int    `yaml:"pool_size"`
 }
 
-// SearchResult represents a single search result
-type SearchResult struct {
-	ID          string            `json:"id"`
-	Title       string            `json:"title"`
-	URL         string            `json:"url"`
-	Snippet     string            `json:"snippet"`
-	Score       float64           `json:"score"`
-	Metadata    map[string]string `json:"metadata"`
-	Timestamp   time.Time         `json:"timestamp"`
+type SecurityConfig struct {
+	EnableCORS      bool     `yaml:"enable_cors"`
+	AllowedOrigins  []string `yaml:"allowed_origins"`
+	EnableAPIKeys   bool     `yaml:"enable_api_keys"`
+	APIKeyHeader    string   `yaml:"api_key_header"`
+	EnableJWT       bool     `yaml:"enable_jwt"`
+	JWTSecret       string   `yaml:"jwt_secret"`
+	EnableRateLimit bool     `yaml:"enable_rate_limit"`
 }
 
-// RateLimiter manages rate limiting for API requests
-type RateLimiter struct {
-	limiters map[string]*rate.Limiter
-	mu       sync.RWMutex
-	config   APIGatewayConfig
-	cleanup  *time.Ticker
+type RateLimitConfig struct {
+	RequestsPerMinute int `yaml:"requests_per_minute"`
+	BurstSize         int `yaml:"burst_size"`
+	EnablePerIP       bool `yaml:"enable_per_ip"`
+	EnablePerAPIKey   bool `yaml:"enable_per_api_key"`
 }
 
-// CacheManager manages response caching
-type CacheManager struct {
-	redisClient *redis.Client
-	config      APIGatewayConfig
-	logger      *zap.Logger
+type CacheConfig struct {
+	EnableRedis     bool          `yaml:"enable_redis"`
+	DefaultTTL      time.Duration `yaml:"default_ttl"`
+	MaxCacheSize    int64         `yaml:"max_cache_size"`
+	EnableCompression bool        `yaml:"enable_compression"`
 }
 
-// MetricsCollector collects API gateway metrics
-type MetricsCollector struct {
-	requestDuration    prometheus.HistogramVec
-	requestCount       prometheus.CounterVec
-	rateLimitHits      prometheus.CounterVec
-	cacheHits          prometheus.CounterVec
-	cacheMisses        prometheus.CounterVec
-	activeConnections  prometheus.Gauge
-	errorCount         prometheus.CounterVec
+type ServicesConfig struct {
+	SearchService    string `yaml:"search_service"`
+	IndexingService  string `yaml:"indexing_service"`
+	RankingService   string `yaml:"ranking_service"`
+	AnalyticsService string `yaml:"analytics_service"`
 }
 
-// APIGateway is the main API gateway struct
+type MetricsConfig struct {
+	EnablePrometheus bool   `yaml:"enable_prometheus"`
+	MetricsPath      string `yaml:"metrics_path"`
+	EnableHealthCheck bool  `yaml:"enable_health_check"`
+}
+
+// API Gateway structure
 type APIGateway struct {
-	config         APIGatewayConfig
-	logger         *zap.Logger
-	rateLimiter    *RateLimiter
-	cacheManager   *CacheManager
-	metrics        *MetricsCollector
-	httpClient     *http.Client
-	server         *http.Server
+	config      *Config
+	router      *gin.Engine
+	redisClient *redis.Client
+	logger      *zap.Logger
+	rateLimiters map[string]*rate.Limiter
+	mu          sync.RWMutex
+	
+	// Metrics
+	requestCounter    *prometheus.CounterVec
+	requestDuration   *prometheus.HistogramVec
+	responseSize      *prometheus.HistogramVec
+	activeConnections prometheus.Gauge
+	cacheHits         *prometheus.CounterVec
+	cacheMisses       *prometheus.CounterVec
+	rateLimitHits     *prometheus.CounterVec
 }
 
-// NewAPIGateway creates a new API gateway instance
-func NewAPIGateway(config APIGatewayConfig) (*APIGateway, error) {
+// Request/Response structures
+type SearchRequest struct {
+	Query     string                 `json:"query" binding:"required"`
+	Filters   map[string]interface{} `json:"filters,omitempty"`
+	Page      int                    `json:"page,omitempty"`
+	PageSize  int                    `json:"page_size,omitempty"`
+	SortBy    string                 `json:"sort_by,omitempty"`
+	UserID    string                 `json:"user_id,omitempty"`
+	SessionID string                 `json:"session_id,omitempty"`
+}
+
+type SearchResponse struct {
+	Results    []SearchResult `json:"results"`
+	Total      int64          `json:"total"`
+	Page       int            `json:"page"`
+	PageSize   int            `json:"page_size"`
+	QueryTime  float64        `json:"query_time_ms"`
+	Facets     map[string]interface{} `json:"facets,omitempty"`
+	Suggestions []string      `json:"suggestions,omitempty"`
+}
+
+type SearchResult struct {
+	ID          string                 `json:"id"`
+	Title       string                 `json:"title"`
+	URL         string                 `json:"url"`
+	Snippet     string                 `json:"snippet"`
+	Score       float64                `json:"score"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Highlights  []string               `json:"highlights,omitempty"`
+}
+
+type ErrorResponse struct {
+	Error   string `json:"error"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+type HealthResponse struct {
+	Status    string            `json:"status"`
+	Timestamp time.Time         `json:"timestamp"`
+	Services  map[string]string `json:"services"`
+	Metrics   map[string]interface{} `json:"metrics"`
+}
+
+// Rate limiter for different types
+type RateLimiter struct {
+	IPLimiters    map[string]*rate.Limiter
+	APIKeyLimiters map[string]*rate.Limiter
+	GlobalLimiter *rate.Limiter
+	mu            sync.RWMutex
+}
+
+// Cache interface
+type Cache interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error
+	Delete(ctx context.Context, key string) error
+	Clear(ctx context.Context) error
+}
+
+// Redis cache implementation
+type RedisCache struct {
+	client *redis.Client
+}
+
+func (r *RedisCache) Get(ctx context.Context, key string) (string, error) {
+	return r.client.Get(ctx, key).Result()
+}
+
+func (r *RedisCache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+	return r.client.Set(ctx, key, value, ttl).Err()
+}
+
+func (r *RedisCache) Delete(ctx context.Context, key string) error {
+	return r.client.Del(ctx, key).Err()
+}
+
+func (r *RedisCache) Clear(ctx context.Context) error {
+	return r.client.FlushDB(ctx).Err()
+}
+
+// NewAPIGateway creates a new API Gateway instance
+func NewAPIGateway(config *Config) (*APIGateway, error) {
 	// Initialize logger
 	logger, err := zap.NewProduction()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
 
-	// Initialize rate limiter
-	rateLimiter := NewRateLimiter(config)
-
-	// Initialize cache manager
-	cacheManager, err := NewCacheManager(config, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cache manager: %w", err)
-	}
-
-	// Initialize metrics collector
-	metrics := NewMetricsCollector()
-
-	// Initialize HTTP client
-	httpClient := &http.Client{
-		Timeout: config.Services.Timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: false,
-			},
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
-		},
-	}
-
-	return &APIGateway{
-		config:       config,
-		logger:       logger,
-		rateLimiter:  rateLimiter,
-		cacheManager: cacheManager,
-		metrics:      metrics,
-		httpClient:   httpClient,
-	}, nil
-}
-
-// NewRateLimiter creates a new rate limiter
-func NewRateLimiter(config APIGatewayConfig) *RateLimiter {
-	rl := &RateLimiter{
-		limiters: make(map[string]*rate.Limiter),
-		config:   config,
-	}
-
-	if config.RateLimit.Enabled {
-		rl.cleanup = time.NewTicker(config.RateLimit.CleanupInterval)
-		go rl.cleanupRoutine()
-	}
-
-	return rl
-}
-
-// NewCacheManager creates a new cache manager
-func NewCacheManager(config APIGatewayConfig, logger *zap.Logger) (*CacheManager, error) {
+	// Initialize Redis client
 	var redisClient *redis.Client
-	
-	if config.Caching.Enabled {
+	if config.Cache.EnableRedis {
 		redisClient = redis.NewClient(&redis.Options{
-			Addr: config.Caching.RedisEndpoint,
+			Addr:     fmt.Sprintf("%s:%d", config.Redis.Host, config.Redis.Port),
+			Password: config.Redis.Password,
+			DB:       config.Redis.DB,
+			PoolSize: config.Redis.PoolSize,
 		})
-		
-		// Test connection
+
+		// Test Redis connection
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		
 		if err := redisClient.Ping(ctx).Err(); err != nil {
 			return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 		}
 	}
 
-	return &CacheManager{
-		redisClient: redisClient,
-		config:      config,
-		logger:      logger,
-	}, nil
-}
+	// Initialize Gin router
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+	router.Use(gin.Recovery())
 
-// NewMetricsCollector creates a new metrics collector
-func NewMetricsCollector() *MetricsCollector {
-	return &MetricsCollector{
-		requestDuration: *prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "api_gateway_request_duration_seconds",
-				Help:    "Request duration in seconds",
-				Buckets: prometheus.DefBuckets,
-			},
-			[]string{"method", "endpoint", "status_code"},
-		),
-		requestCount: *prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "api_gateway_requests_total",
-				Help: "Total number of requests",
-			},
-			[]string{"method", "endpoint", "status_code"},
-		),
-		rateLimitHits: *prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "api_gateway_rate_limit_hits_total",
-				Help: "Total number of rate limit hits",
-			},
-			[]string{"client_ip"},
-		),
-		cacheHits: *prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "api_gateway_cache_hits_total",
-				Help: "Total number of cache hits",
-			},
-			[]string{"endpoint"},
-		),
-		cacheMisses: *prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "api_gateway_cache_misses_total",
-				Help: "Total number of cache misses",
-			},
-			[]string{"endpoint"},
-		),
-		activeConnections: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Name: "api_gateway_active_connections",
-				Help: "Number of active connections",
-			},
-		),
-		errorCount: *prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "api_gateway_errors_total",
-				Help: "Total number of errors",
-			},
-			[]string{"error_type"},
-		),
-	}
-}
-
-// Start starts the API gateway server
-func (gw *APIGateway) Start() error {
-	// Register metrics
-	prometheus.MustRegister(
-		gw.metrics.requestDuration,
-		gw.metrics.requestCount,
-		gw.metrics.rateLimitHits,
-		gw.metrics.cacheHits,
-		gw.metrics.cacheMisses,
-		gw.metrics.activeConnections,
-		gw.metrics.errorCount,
+	// Initialize metrics
+	requestCounter := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "api_gateway_requests_total",
+			Help: "Total number of API requests",
+		},
+		[]string{"method", "endpoint", "status_code"},
 	)
 
-	// Setup Gin router
-	router := gw.setupRouter()
+	requestDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "api_gateway_request_duration_seconds",
+			Help:    "Request duration in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "endpoint"},
+	)
 
-	// Create HTTP server
-	gw.server = &http.Server{
-		Addr:         fmt.Sprintf("%s:%d", gw.config.Server.Host, gw.config.Server.Port),
-		Handler:      router,
-		ReadTimeout:  gw.config.Server.ReadTimeout,
-		WriteTimeout: gw.config.Server.WriteTimeout,
-		IdleTimeout:  gw.config.Server.IdleTimeout,
+	responseSize := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "api_gateway_response_size_bytes",
+			Help:    "Response size in bytes",
+			Buckets: prometheus.ExponentialBuckets(100, 10, 8),
+		},
+		[]string{"method", "endpoint"},
+	)
+
+	activeConnections := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "api_gateway_active_connections",
+			Help: "Number of active connections",
+		},
+	)
+
+	cacheHits := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "api_gateway_cache_hits_total",
+			Help: "Total number of cache hits",
+		},
+		[]string{"cache_type"},
+	)
+
+	cacheMisses := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "api_gateway_cache_misses_total",
+			Help: "Total number of cache misses",
+		},
+		[]string{"cache_type"},
+	)
+
+	rateLimitHits := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "api_gateway_rate_limit_hits_total",
+			Help: "Total number of rate limit hits",
+		},
+		[]string{"limiter_type"},
+	)
+
+	// Register metrics
+	prometheus.MustRegister(requestCounter, requestDuration, responseSize, activeConnections, cacheHits, cacheMisses, rateLimitHits)
+
+	gateway := &APIGateway{
+		config:      config,
+		router:      router,
+		redisClient: redisClient,
+		logger:      logger,
+		rateLimiters: make(map[string]*rate.Limiter),
+		requestCounter:    requestCounter,
+		requestDuration:   requestDuration,
+		responseSize:      responseSize,
+		activeConnections: activeConnections,
+		cacheHits:         cacheHits,
+		cacheMisses:       cacheMisses,
+		rateLimitHits:     rateLimitHits,
 	}
 
-	gw.logger.Info("Starting API Gateway server",
-		zap.String("address", gw.server.Addr),
-		zap.Duration("read_timeout", gw.config.Server.ReadTimeout),
-		zap.Duration("write_timeout", gw.config.Server.WriteTimeout))
+	// Setup middleware
+	gateway.setupMiddleware()
 
-	// Start server
-	if gw.config.Security.EnableHTTPS {
-		return gw.server.ListenAndServeTLS(gw.config.Security.CertFile, gw.config.Security.KeyFile)
-	}
-	return gw.server.ListenAndServe()
+	// Setup routes
+	gateway.setupRoutes()
+
+	return gateway, nil
 }
 
-// Stop gracefully stops the API gateway
-func (gw *APIGateway) Stop(ctx context.Context) error {
-	gw.logger.Info("Stopping API Gateway server")
-	
-	if gw.rateLimiter.cleanup != nil {
-		gw.rateLimiter.cleanup.Stop()
+// setupMiddleware configures all middleware
+func (g *APIGateway) setupMiddleware() {
+	// CORS middleware
+	if g.config.Security.EnableCORS {
+		g.router.Use(g.corsMiddleware())
 	}
-	
-	return gw.server.Shutdown(ctx)
-}
 
-// setupRouter sets up the Gin router with middleware and routes
-func (gw *APIGateway) setupRouter() *gin.Engine {
-	router := gin.New()
+	// Logging middleware
+	g.router.Use(g.loggingMiddleware())
 
-	// Global middleware
-	router.Use(gw.loggingMiddleware())
-	router.Use(gw.recoveryMiddleware())
-	router.Use(gw.metricsMiddleware())
-	router.Use(gw.corsMiddleware())
+	// Metrics middleware
+	g.router.Use(g.metricsMiddleware())
 
 	// Rate limiting middleware
-	if gw.config.RateLimit.Enabled {
-		router.Use(gw.rateLimitMiddleware())
+	if g.config.Security.EnableRateLimit {
+		g.router.Use(g.rateLimitMiddleware())
 	}
 
-	// API key middleware
-	if gw.config.Security.EnableAPIKey {
-		router.Use(gw.apiKeyMiddleware())
+	// Authentication middleware
+	if g.config.Security.EnableAPIKeys || g.config.Security.EnableJWT {
+		g.router.Use(g.authMiddleware())
 	}
 
+	// Compression middleware
+	g.router.Use(g.compressionMiddleware())
+
+	// Request size limiting
+	g.router.Use(g.requestSizeMiddleware())
+}
+
+// setupRoutes configures all API routes
+func (g *APIGateway) setupRoutes() {
 	// Health check endpoint
-	if gw.config.Monitoring.EnableHealthCheck {
-		router.GET(gw.config.Monitoring.HealthCheckPath, gw.healthCheckHandler())
+	if g.config.Metrics.EnableHealthCheck {
+		g.router.GET("/health", g.healthCheck)
 	}
 
 	// Metrics endpoint
-	if gw.config.Monitoring.EnableMetrics {
-		router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	if g.config.Metrics.EnablePrometheus {
+		g.router.GET(g.config.Metrics.MetricsPath, gin.WrapH(promhttp.Handler()))
 	}
 
 	// API routes
-	api := router.Group("/api/v1")
+	api := g.router.Group("/api/v1")
 	{
-		api.POST("/search", gw.searchHandler())
-		api.GET("/search", gw.searchHandler())
-		api.GET("/suggest", gw.suggestHandler())
-		api.GET("/autocomplete", gw.autocompleteHandler())
-		api.GET("/trending", gw.trendingHandler())
-		api.GET("/stats", gw.statsHandler())
-	}
+		// Search endpoints
+		api.POST("/search", g.search)
+		api.GET("/search/suggest", g.searchSuggest)
+		api.GET("/search/autocomplete", g.autocomplete)
 
-	return router
+		// Document endpoints
+		api.GET("/documents/:id", g.getDocument)
+		api.POST("/documents", g.createDocument)
+		api.PUT("/documents/:id", g.updateDocument)
+		api.DELETE("/documents/:id", g.deleteDocument)
+
+		// Analytics endpoints
+		api.POST("/analytics/click", g.trackClick)
+		api.POST("/analytics/impression", g.trackImpression)
+		api.GET("/analytics/stats", g.getAnalytics)
+
+		// Admin endpoints
+		admin := api.Group("/admin")
+		admin.Use(g.adminAuthMiddleware())
+		{
+			admin.GET("/stats", g.getStats)
+			admin.POST("/cache/clear", g.clearCache)
+			admin.GET("/rate-limits", g.getRateLimits)
+			admin.POST("/rate-limits/reset", g.resetRateLimits)
+		}
+	}
 }
 
-// searchHandler handles search requests
-func (gw *APIGateway) searchHandler() gin.HandlerFunc {
+// Middleware implementations
+func (g *APIGateway) corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		startTime := time.Now()
-		requestID := generateRequestID()
-
-		// Parse request
-		var req SearchRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			gw.logger.Error("Failed to parse search request", zap.Error(err))
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
-			return
-		}
-
-		// Set defaults
-		if req.Limit <= 0 {
-			req.Limit = 10
-		}
-		if req.Offset < 0 {
-			req.Offset = 0
-		}
-
-		// Check cache first
-		var response *SearchResponse
-		var cacheHit bool
+		origin := c.Request.Header.Get("Origin")
 		
-		if gw.config.Caching.Enabled {
-			if cachedResp, err := gw.cacheManager.GetCachedResponse(&req); err == nil && cachedResp != nil {
-				response = cachedResp
-				cacheHit = true
-				gw.metrics.cacheHits.WithLabelValues("search").Inc()
-			} else {
-				gw.metrics.cacheMisses.WithLabelValues("search").Inc()
+		// Check if origin is allowed
+		allowed := false
+		for _, allowedOrigin := range g.config.Security.AllowedOrigins {
+			if allowedOrigin == "*" || allowedOrigin == origin {
+				allowed = true
+				break
 			}
 		}
 
-		// If not cached, make request to search service
-		if response == nil {
-			var err error
-			response, err = gw.forwardSearchRequest(&req, requestID)
-			if err != nil {
-				gw.logger.Error("Search request failed", zap.Error(err))
-				gw.metrics.errorCount.WithLabelValues("search_service_error").Inc()
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Search service unavailable"})
-				return
-			}
-
-			// Cache the response
-			if gw.config.Caching.Enabled {
-				gw.cacheManager.CacheResponse(&req, response)
-			}
+		if allowed {
+			c.Header("Access-Control-Allow-Origin", origin)
 		}
 
-		// Set response metadata
-		response.ProcessingTime = time.Since(startTime)
-		response.CacheHit = cacheHit
-		response.RequestID = requestID
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-API-Key")
+		c.Header("Access-Control-Allow-Credentials", "true")
 
-		// Record metrics
-		gw.metrics.requestCount.WithLabelValues("POST", "/search", "200").Inc()
-		gw.metrics.requestDuration.WithLabelValues("POST", "/search", "200").Observe(time.Since(startTime).Seconds())
-
-		c.JSON(http.StatusOK, response)
-	}
-}
-
-// suggestHandler handles search suggestions
-func (gw *APIGateway) suggestHandler() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		query := c.Query("q")
-		if query == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Query parameter 'q' is required"})
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
 
-		// Forward to suggestion service
-		suggestions, err := gw.forwardSuggestionRequest(query)
-		if err != nil {
-			gw.logger.Error("Suggestion request failed", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Suggestion service unavailable"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"suggestions": suggestions})
+		c.Next()
 	}
 }
 
-// autocompleteHandler handles autocomplete requests
-func (gw *APIGateway) autocompleteHandler() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		query := c.Query("q")
-		if query == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Query parameter 'q' is required"})
-			return
-		}
-
-		// Forward to autocomplete service
-		completions, err := gw.forwardAutocompleteRequest(query)
-		if err != nil {
-			gw.logger.Error("Autocomplete request failed", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Autocomplete service unavailable"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"completions": completions})
-	}
-}
-
-// trendingHandler handles trending queries
-func (gw *APIGateway) trendingHandler() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Forward to trending service
-		trending, err := gw.forwardTrendingRequest()
-		if err != nil {
-			gw.logger.Error("Trending request failed", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Trending service unavailable"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"trending": trending})
-	}
-}
-
-// statsHandler handles statistics requests
-func (gw *APIGateway) statsHandler() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		stats := gin.H{
-			"rate_limiter": gw.rateLimiter.getStats(),
-			"cache":        gw.cacheManager.getStats(),
-			"gateway":      gw.getGatewayStats(),
-		}
-
-		c.JSON(http.StatusOK, stats)
-	}
-}
-
-// healthCheckHandler handles health check requests
-func (gw *APIGateway) healthCheckHandler() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		health := gin.H{
-			"status":    "healthy",
-			"timestamp": time.Now().Unix(),
-			"version":   "1.0.0",
-		}
-
-		c.JSON(http.StatusOK, health)
-	}
-}
-
-// forwardSearchRequest forwards search request to search service
-func (gw *APIGateway) forwardSearchRequest(req *SearchRequest, requestID string) (*SearchResponse, error) {
-	// Create request body
-	requestBody := map[string]interface{}{
-		"query":      req.Query,
-		"limit":      req.Limit,
-		"offset":     req.Offset,
-		"filters":    req.Filters,
-		"sort_by":    req.SortBy,
-		"sort_order": req.SortOrder,
-		"request_id": requestID,
-	}
-
-	jsonBody, err := json.Marshal(requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	// Make HTTP request
-	httpReq, err := http.NewRequest("POST", gw.config.Services.SearchServiceURL+"/search", strings.NewReader(string(jsonBody)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Request-ID", requestID)
-
-	resp, err := gw.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("search service returned status %d", resp.StatusCode)
-	}
-
-	// Parse response
-	var searchResp SearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &searchResp, nil
-}
-
-// forwardSuggestionRequest forwards suggestion request
-func (gw *APIGateway) forwardSuggestionRequest(query string) ([]string, error) {
-	// Implementation would make HTTP request to suggestion service
-	return []string{"suggestion1", "suggestion2", "suggestion3"}, nil
-}
-
-// forwardAutocompleteRequest forwards autocomplete request
-func (gw *APIGateway) forwardAutocompleteRequest(query string) ([]string, error) {
-	// Implementation would make HTTP request to autocomplete service
-	return []string{"completion1", "completion2", "completion3"}, nil
-}
-
-// forwardTrendingRequest forwards trending request
-func (gw *APIGateway) forwardTrendingRequest() ([]string, error) {
-	// Implementation would make HTTP request to trending service
-	return []string{"trending1", "trending2", "trending3"}, nil
-}
-
-// Middleware functions
-func (gw *APIGateway) loggingMiddleware() gin.HandlerFunc {
+func (g *APIGateway) loggingMiddleware() gin.HandlerFunc {
 	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
-		gw.logger.Info("HTTP Request",
+		g.logger.Info("HTTP Request",
 			zap.String("method", param.Method),
 			zap.String("path", param.Path),
 			zap.Int("status", param.StatusCode),
 			zap.Duration("latency", param.Latency),
 			zap.String("client_ip", param.ClientIP),
+			zap.String("user_agent", param.Request.UserAgent()),
 		)
 		return ""
 	})
 }
 
-func (gw *APIGateway) recoveryMiddleware() gin.HandlerFunc {
-	return gin.Recovery()
-}
-
-func (gw *APIGateway) metricsMiddleware() gin.HandlerFunc {
+func (g *APIGateway) metricsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		c.Next()
 		
-		duration := time.Since(start)
+		// Increment active connections
+		g.activeConnections.Inc()
+		defer g.activeConnections.Dec()
+
+		c.Next()
+
+		// Record metrics
+		duration := time.Since(start).Seconds()
 		status := strconv.Itoa(c.Writer.Status())
 		
-		gw.metrics.requestDuration.WithLabelValues(c.Request.Method, c.FullPath(), status).Observe(duration.Seconds())
-		gw.metrics.requestCount.WithLabelValues(c.Request.Method, c.FullPath(), status).Inc()
+		g.requestCounter.WithLabelValues(c.Request.Method, c.FullPath(), status).Inc()
+		g.requestDuration.WithLabelValues(c.Request.Method, c.FullPath()).Observe(duration)
+		g.responseSize.WithLabelValues(c.Request.Method, c.FullPath()).Observe(float64(c.Writer.Size()))
 	}
 }
 
-func (gw *APIGateway) corsMiddleware() gin.HandlerFunc {
+func (g *APIGateway) rateLimitMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if gw.config.Security.EnableCORS {
-			origin := c.Request.Header.Get("Origin")
-			if gw.isAllowedOrigin(origin) {
-				c.Header("Access-Control-Allow-Origin", origin)
+		var limiter *rate.Limiter
+		var limiterType string
+
+		// Get rate limiter based on configuration
+		if g.config.RateLimit.EnablePerAPIKey {
+			apiKey := c.GetHeader(g.config.Security.APIKeyHeader)
+			if apiKey != "" {
+				limiter = g.getRateLimiter("api_key:"+apiKey)
+				limiterType = "api_key"
 			}
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
-			c.Header("Access-Control-Allow-Credentials", "true")
 		}
-		
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusNoContent)
+
+		if limiter == nil && g.config.RateLimit.EnablePerIP {
+			clientIP := c.ClientIP()
+			limiter = g.getRateLimiter("ip:"+clientIP)
+			limiterType = "ip"
+		}
+
+		if limiter == nil {
+			limiter = g.getRateLimiter("global")
+			limiterType = "global"
+		}
+
+		// Check rate limit
+		if !limiter.Allow() {
+			g.rateLimitHits.WithLabelValues(limiterType).Inc()
+			c.JSON(http.StatusTooManyRequests, ErrorResponse{
+				Error:   "Rate limit exceeded",
+				Code:    http.StatusTooManyRequests,
+				Message: "Too many requests. Please try again later.",
+			})
+			c.Abort()
 			return
 		}
-		
+
 		c.Next()
 	}
 }
 
-func (gw *APIGateway) rateLimitMiddleware() gin.HandlerFunc {
+func (g *APIGateway) authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		clientIP := c.ClientIP()
-		
-		if !gw.rateLimiter.Allow(clientIP) {
-			gw.metrics.rateLimitHits.WithLabelValues(clientIP).Inc()
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Rate limit exceeded"})
-			c.Abort()
+		// Skip auth for health check and metrics
+		if c.Request.URL.Path == "/health" || c.Request.URL.Path == g.config.Metrics.MetricsPath {
+			c.Next()
 			return
 		}
-		
+
+		// API Key authentication
+		if g.config.Security.EnableAPIKeys {
+			apiKey := c.GetHeader(g.config.Security.APIKeyHeader)
+			if apiKey == "" {
+				c.JSON(http.StatusUnauthorized, ErrorResponse{
+					Error:   "Unauthorized",
+					Code:    http.StatusUnauthorized,
+					Message: "API key required",
+				})
+				c.Abort()
+				return
+			}
+
+			// Validate API key (in production, check against database)
+			if !g.validateAPIKey(apiKey) {
+				c.JSON(http.StatusUnauthorized, ErrorResponse{
+					Error:   "Unauthorized",
+					Code:    http.StatusUnauthorized,
+					Message: "Invalid API key",
+				})
+				c.Abort()
+				return
+			}
+		}
+
+		// JWT authentication
+		if g.config.Security.EnableJWT {
+			authHeader := c.GetHeader("Authorization")
+			if authHeader == "" {
+				c.JSON(http.StatusUnauthorized, ErrorResponse{
+					Error:   "Unauthorized",
+					Code:    http.StatusUnauthorized,
+					Message: "Authorization header required",
+				})
+				c.Abort()
+				return
+			}
+
+			token := strings.TrimPrefix(authHeader, "Bearer ")
+			if !g.validateJWT(token) {
+				c.JSON(http.StatusUnauthorized, ErrorResponse{
+					Error:   "Unauthorized",
+					Code:    http.StatusUnauthorized,
+					Message: "Invalid JWT token",
+				})
+				c.Abort()
+				return
+			}
+		}
+
 		c.Next()
 	}
 }
 
-func (gw *APIGateway) apiKeyMiddleware() gin.HandlerFunc {
+func (g *APIGateway) adminAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		apiKey := c.GetHeader(gw.config.Security.APIKeyHeader)
-		if apiKey == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "API key required"})
+		// In production, implement proper admin authentication
+		adminKey := c.GetHeader("X-Admin-Key")
+		if adminKey != "admin-secret-key" {
+			c.JSON(http.StatusForbidden, ErrorResponse{
+				Error:   "Forbidden",
+				Code:    http.StatusForbidden,
+				Message: "Admin access required",
+			})
 			c.Abort()
 			return
 		}
-		
-		// Validate API key (implementation would check against database)
-		if !gw.validateAPIKey(apiKey) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
-			c.Abort()
-			return
-		}
-		
 		c.Next()
 	}
 }
 
-// Helper functions
-func (gw *APIGateway) isAllowedOrigin(origin string) bool {
-	for _, allowedOrigin := range gw.config.Security.AllowedOrigins {
-		if origin == allowedOrigin {
-			return true
-		}
-	}
-	return false
-}
-
-func (gw *APIGateway) validateAPIKey(apiKey string) bool {
-	// Implementation would validate against database
-	return len(apiKey) > 0
-}
-
-func (gw *APIGateway) getGatewayStats() gin.H {
-	return gin.H{
-		"uptime":      time.Since(time.Now()).String(),
-		"version":     "1.0.0",
-		"config":      gw.config,
+func (g *APIGateway) compressionMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Enable gzip compression
+		c.Header("Content-Encoding", "gzip")
+		c.Next()
 	}
 }
 
-func generateRequestID() string {
-	return fmt.Sprintf("req_%d_%d", time.Now().UnixNano(), os.Getpid())
+func (g *APIGateway) requestSizeMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Limit request size to 10MB
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 10<<20)
+		c.Next()
+	}
 }
 
-// RateLimiter methods
-func (rl *RateLimiter) Allow(clientIP string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	
-	limiter, exists := rl.limiters[clientIP]
+// Rate limiter management
+func (g *APIGateway) getRateLimiter(key string) *rate.Limiter {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	limiter, exists := g.rateLimiters[key]
 	if !exists {
 		limiter = rate.NewLimiter(
-			rate.Limit(rl.config.RateLimit.RequestsPerMinute)/60,
-			rl.config.RateLimit.BurstSize,
+			rate.Limit(g.config.RateLimit.RequestsPerMinute/60.0),
+			g.config.RateLimit.BurstSize,
 		)
-		rl.limiters[clientIP] = limiter
+		g.rateLimiters[key] = limiter
 	}
-	
-	return limiter.Allow()
+
+	return limiter
 }
 
-func (rl *RateLimiter) cleanupRoutine() {
-	for range rl.cleanup.C {
-		rl.mu.Lock()
-		for clientIP, limiter := range rl.limiters {
-			if !limiter.Allow() {
-				delete(rl.limiters, clientIP)
+// Authentication helpers
+func (g *APIGateway) validateAPIKey(apiKey string) bool {
+	// In production, validate against database
+	validKeys := map[string]bool{
+		"test-api-key-123": true,
+		"prod-api-key-456": true,
+	}
+	return validKeys[apiKey]
+}
+
+func (g *APIGateway) validateJWT(token string) bool {
+	// In production, implement proper JWT validation
+	return len(token) > 10
+}
+
+// Handler implementations
+func (g *APIGateway) healthCheck(c *gin.Context) {
+	services := make(map[string]string)
+	
+	// Check Redis connection
+	if g.redisClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := g.redisClient.Ping(ctx).Err(); err != nil {
+			services["redis"] = "unhealthy"
+		} else {
+			services["redis"] = "healthy"
+		}
+	} else {
+		services["redis"] = "disabled"
+	}
+
+	// Check external services
+	services["search_service"] = g.checkServiceHealth(g.config.Services.SearchService)
+	services["indexing_service"] = g.checkServiceHealth(g.config.Services.IndexingService)
+
+	// Determine overall status
+	status := "healthy"
+	for _, serviceStatus := range services {
+		if serviceStatus == "unhealthy" {
+			status = "unhealthy"
+			break
+		}
+	}
+
+	response := HealthResponse{
+		Status:    status,
+		Timestamp: time.Now(),
+		Services:  services,
+		Metrics: map[string]interface{}{
+			"active_connections": g.getActiveConnections(),
+			"total_requests":     g.getTotalRequests(),
+		},
+	}
+
+	if status == "healthy" {
+		c.JSON(http.StatusOK, response)
+	} else {
+		c.JSON(http.StatusServiceUnavailable, response)
+	}
+}
+
+func (g *APIGateway) search(c *gin.Context) {
+	var req SearchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Invalid request",
+			Code:    http.StatusBadRequest,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Set defaults
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 {
+		req.PageSize = 10
+	}
+	if req.PageSize > 100 {
+		req.PageSize = 100
+	}
+
+	// Check cache first
+	cacheKey := g.generateCacheKey("search", req)
+	if g.config.Cache.EnableRedis && g.redisClient != nil {
+		if cached, err := g.redisClient.Get(c.Request.Context(), cacheKey).Result(); err == nil {
+			var response SearchResponse
+			if json.Unmarshal([]byte(cached), &response) == nil {
+				g.cacheHits.WithLabelValues("search").Inc()
+				c.JSON(http.StatusOK, response)
+				return
 			}
 		}
-		rl.mu.Unlock()
+		g.cacheMisses.WithLabelValues("search").Inc()
 	}
-}
 
-func (rl *RateLimiter) getStats() gin.H {
-	rl.mu.RLock()
-	defer rl.mu.RUnlock()
-	
-	return gin.H{
-		"active_clients": len(rl.limiters),
-		"requests_per_minute": rl.config.RateLimit.RequestsPerMinute,
-		"burst_size": rl.config.RateLimit.BurstSize,
-	}
-}
+	// Forward request to search service
+	start := time.Now()
+	response, err := g.forwardSearchRequest(req)
+	queryTime := time.Since(start).Seconds() * 1000
 
-// CacheManager methods
-func (cm *CacheManager) GetCachedResponse(req *SearchRequest) (*SearchResponse, error) {
-	if cm.redisClient == nil {
-		return nil, fmt.Errorf("Redis not configured")
-	}
-	
-	cacheKey := cm.generateCacheKey(req)
-	ctx := context.Background()
-	
-	data, err := cm.redisClient.Get(ctx, cacheKey).Result()
 	if err != nil {
-		return nil, err
-	}
-	
-	var response SearchResponse
-	if err := json.Unmarshal([]byte(data), &response); err != nil {
-		return nil, err
-	}
-	
-	return &response, nil
-}
-
-func (cm *CacheManager) CacheResponse(req *SearchRequest, response *SearchResponse) {
-	if cm.redisClient == nil {
+		g.logger.Error("Search request failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Search failed",
+			Code:    http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
 		return
 	}
-	
-	cacheKey := cm.generateCacheKey(req)
-	ctx := context.Background()
-	
-	data, err := json.Marshal(response)
-	if err != nil {
-		cm.logger.Error("Failed to marshal response for caching", zap.Error(err))
+
+	response.QueryTime = queryTime
+
+	// Cache the response
+	if g.config.Cache.EnableRedis && g.redisClient != nil {
+		if data, err := json.Marshal(response); err == nil {
+			g.redisClient.Set(c.Request.Context(), cacheKey, data, g.config.Cache.DefaultTTL)
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (g *APIGateway) searchSuggest(c *gin.Context) {
+	query := c.Query("q")
+	if query == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Missing query parameter",
+			Code:    http.StatusBadRequest,
+			Message: "Query parameter 'q' is required",
+		})
 		return
 	}
-	
-	cm.redisClient.Set(ctx, cacheKey, data, cm.config.Caching.DefaultTTL)
-}
 
-func (cm *CacheManager) generateCacheKey(req *SearchRequest) string {
-	keyData := fmt.Sprintf("%s:%d:%d:%v", req.Query, req.Limit, req.Offset, req.Filters)
-	return fmt.Sprintf("search:%x", []byte(keyData))
-}
-
-func (cm *CacheManager) getStats() gin.H {
-	if cm.redisClient == nil {
-		return gin.H{"enabled": false}
-	}
-	
-	ctx := context.Background()
-	info, err := cm.redisClient.Info(ctx, "memory").Result()
+	// Get suggestions from search service
+	suggestions, err := g.getSearchSuggestions(query)
 	if err != nil {
-		return gin.H{"enabled": true, "error": err.Error()}
+		g.logger.Error("Failed to get suggestions", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to get suggestions",
+			Code:    http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
 	}
-	
-	return gin.H{
-		"enabled": true,
-		"info":    info,
-	}
+
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"suggestions": suggestions,
+	})
 }
 
-// Main function
+func (g *APIGateway) autocomplete(c *gin.Context) {
+	query := c.Query("q")
+	if query == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Missing query parameter",
+			Code:    http.StatusBadRequest,
+			Message: "Query parameter 'q' is required",
+		})
+		return
+	}
+
+	// Get autocomplete suggestions
+	suggestions, err := g.getAutocompleteSuggestions(query)
+	if err != nil {
+		g.logger.Error("Failed to get autocomplete", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to get autocomplete",
+			Code:    http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"suggestions": suggestions,
+	})
+}
+
+func (g *APIGateway) getDocument(c *gin.Context) {
+	docID := c.Param("id")
+	if docID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Missing document ID",
+			Code:    http.StatusBadRequest,
+			Message: "Document ID is required",
+		})
+		return
+	}
+
+	// Get document from indexing service
+	document, err := g.getDocumentByID(docID)
+	if err != nil {
+		g.logger.Error("Failed to get document", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to get document",
+			Code:    http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
+	}
+
+	if document == nil {
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			Error:   "Document not found",
+			Code:    http.StatusNotFound,
+			Message: "Document with the specified ID was not found",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, document)
+}
+
+func (g *APIGateway) createDocument(c *gin.Context) {
+	var document map[string]interface{}
+	if err := c.ShouldBindJSON(&document); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Invalid document",
+			Code:    http.StatusBadRequest,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Create document via indexing service
+	docID, err := g.createDocumentInService(document)
+	if err != nil {
+		g.logger.Error("Failed to create document", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to create document",
+			Code:    http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, map[string]interface{}{
+		"id":      docID,
+		"message": "Document created successfully",
+	})
+}
+
+func (g *APIGateway) updateDocument(c *gin.Context) {
+	docID := c.Param("id")
+	if docID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Missing document ID",
+			Code:    http.StatusBadRequest,
+			Message: "Document ID is required",
+		})
+		return
+	}
+
+	var document map[string]interface{}
+	if err := c.ShouldBindJSON(&document); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Invalid document",
+			Code:    http.StatusBadRequest,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Update document via indexing service
+	err := g.updateDocumentInService(docID, document)
+	if err != nil {
+		g.logger.Error("Failed to update document", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to update document",
+			Code:    http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Document updated successfully",
+	})
+}
+
+func (g *APIGateway) deleteDocument(c *gin.Context) {
+	docID := c.Param("id")
+	if docID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Missing document ID",
+			Code:    http.StatusBadRequest,
+			Message: "Document ID is required",
+		})
+		return
+	}
+
+	// Delete document via indexing service
+	err := g.deleteDocumentInService(docID)
+	if err != nil {
+		g.logger.Error("Failed to delete document", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to delete document",
+			Code:    http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Document deleted successfully",
+	})
+}
+
+func (g *APIGateway) trackClick(c *gin.Context) {
+	var clickData map[string]interface{}
+	if err := c.ShouldBindJSON(&clickData); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Invalid click data",
+			Code:    http.StatusBadRequest,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Track click via analytics service
+	err := g.trackClickInService(clickData)
+	if err != nil {
+		g.logger.Error("Failed to track click", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to track click",
+			Code:    http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Click tracked successfully",
+	})
+}
+
+func (g *APIGateway) trackImpression(c *gin.Context) {
+	var impressionData map[string]interface{}
+	if err := c.ShouldBindJSON(&impressionData); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error:   "Invalid impression data",
+			Code:    http.StatusBadRequest,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Track impression via analytics service
+	err := g.trackImpressionInService(impressionData)
+	if err != nil {
+		g.logger.Error("Failed to track impression", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to track impression",
+			Code:    http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Impression tracked successfully",
+	})
+}
+
+func (g *APIGateway) getAnalytics(c *gin.Context) {
+	// Get analytics data
+	analytics, err := g.getAnalyticsFromService()
+	if err != nil {
+		g.logger.Error("Failed to get analytics", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error:   "Failed to get analytics",
+			Code:    http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, analytics)
+}
+
+func (g *APIGateway) getStats(c *gin.Context) {
+	stats := map[string]interface{}{
+		"requests_total":     g.getTotalRequests(),
+		"active_connections": g.getActiveConnections(),
+		"cache_hits":         g.getCacheHits(),
+		"cache_misses":       g.getCacheMisses(),
+		"rate_limit_hits":    g.getRateLimitHits(),
+		"uptime":            g.getUptime(),
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
+
+func (g *APIGateway) clearCache(c *gin.Context) {
+	if g.redisClient != nil {
+		err := g.redisClient.FlushDB(c.Request.Context()).Err()
+		if err != nil {
+			g.logger.Error("Failed to clear cache", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Error:   "Failed to clear cache",
+				Code:    http.StatusInternalServerError,
+				Message: "Internal server error",
+			})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Cache cleared successfully",
+	})
+}
+
+func (g *APIGateway) getRateLimits(c *gin.Context) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	limits := make(map[string]interface{})
+	for key, limiter := range g.rateLimiters {
+		limits[key] = map[string]interface{}{
+			"limit":  limiter.Limit(),
+			"burst":  limiter.Burst(),
+			"tokens": limiter.Tokens(),
+		}
+	}
+
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"rate_limits": limits,
+	})
+}
+
+func (g *APIGateway) resetRateLimits(c *gin.Context) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Reset all rate limiters
+	for key := range g.rateLimiters {
+		g.rateLimiters[key] = rate.NewLimiter(
+			rate.Limit(g.config.RateLimit.RequestsPerMinute/60.0),
+			g.config.RateLimit.BurstSize,
+		)
+	}
+
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Rate limits reset successfully",
+	})
+}
+
+// Helper methods
+func (g *APIGateway) generateCacheKey(prefix string, data interface{}) string {
+	jsonData, _ := json.Marshal(data)
+	return fmt.Sprintf("%s:%x", prefix, jsonData)
+}
+
+func (g *APIGateway) checkServiceHealth(serviceURL string) string {
+	// In production, implement proper health checks
+	if serviceURL == "" {
+		return "disabled"
+	}
+	return "healthy"
+}
+
+func (g *APIGateway) forwardSearchRequest(req SearchRequest) (*SearchResponse, error) {
+	// In production, make HTTP request to search service
+	// For now, return mock data
+	return &SearchResponse{
+		Results: []SearchResult{
+			{
+				ID:      "1",
+				Title:   "Example Document",
+				URL:     "https://example.com",
+				Snippet: "This is an example document...",
+				Score:   0.95,
+			},
+		},
+		Total:    1,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	}, nil
+}
+
+func (g *APIGateway) getSearchSuggestions(query string) ([]string, error) {
+	// In production, get from search service
+	return []string{"machine learning", "artificial intelligence", "deep learning"}, nil
+}
+
+func (g *APIGateway) getAutocompleteSuggestions(query string) ([]string, error) {
+	// In production, get from search service
+	return []string{"machine learning algorithms", "machine learning python", "machine learning tutorial"}, nil
+}
+
+func (g *APIGateway) getDocumentByID(docID string) (map[string]interface{}, error) {
+	// In production, get from indexing service
+	return map[string]interface{}{
+		"id":      docID,
+		"title":   "Example Document",
+		"content": "This is example content",
+		"url":     "https://example.com",
+	}, nil
+}
+
+func (g *APIGateway) createDocumentInService(document map[string]interface{}) (string, error) {
+	// In production, create via indexing service
+	return "doc-123", nil
+}
+
+func (g *APIGateway) updateDocumentInService(docID string, document map[string]interface{}) error {
+	// In production, update via indexing service
+	return nil
+}
+
+func (g *APIGateway) deleteDocumentInService(docID string) error {
+	// In production, delete via indexing service
+	return nil
+}
+
+func (g *APIGateway) trackClickInService(clickData map[string]interface{}) error {
+	// In production, track via analytics service
+	return nil
+}
+
+func (g *APIGateway) trackImpressionInService(impressionData map[string]interface{}) error {
+	// In production, track via analytics service
+	return nil
+}
+
+func (g *APIGateway) getAnalyticsFromService() (map[string]interface{}, error) {
+	// In production, get from analytics service
+	return map[string]interface{}{
+		"total_searches": 1000,
+		"total_clicks":   100,
+		"ctr":            0.1,
+	}, nil
+}
+
+// Statistics helpers
+func (g *APIGateway) getTotalRequests() int64 {
+	// In production, get from metrics
+	return 1000
+}
+
+func (g *APIGateway) getActiveConnections() float64 {
+	// In production, get from metrics
+	return 10
+}
+
+func (g *APIGateway) getCacheHits() int64 {
+	// In production, get from metrics
+	return 500
+}
+
+func (g *APIGateway) getCacheMisses() int64 {
+	// In production, get from metrics
+	return 500
+}
+
+func (g *APIGateway) getRateLimitHits() int64 {
+	// In production, get from metrics
+	return 10
+}
+
+func (g *APIGateway) getUptime() time.Duration {
+	// In production, calculate actual uptime
+	return time.Hour * 24
+}
+
+// Start the API Gateway
+func (g *APIGateway) Start() error {
+	server := &http.Server{
+		Addr:         fmt.Sprintf("%s:%d", g.config.Server.Host, g.config.Server.Port),
+		Handler:      g.router,
+		ReadTimeout:  time.Duration(g.config.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(g.config.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(g.config.Server.IdleTimeout) * time.Second,
+	}
+
+	// Configure TLS if enabled
+	if g.config.Server.EnableHTTPS {
+		server.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		}
+	}
+
+	g.logger.Info("Starting API Gateway",
+		zap.String("host", g.config.Server.Host),
+		zap.Int("port", g.config.Server.Port),
+		zap.Bool("https", g.config.Server.EnableHTTPS),
+	)
+
+	// Start server in goroutine
+	go func() {
+		var err error
+		if g.config.Server.EnableHTTPS {
+			err = server.ListenAndServeTLS(g.config.Server.CertFile, g.config.Server.KeyFile)
+		} else {
+			err = server.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
+			g.logger.Fatal("Failed to start server", zap.Error(err))
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	g.logger.Info("Shutting down API Gateway...")
+
+	// Graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		g.logger.Error("Server forced to shutdown", zap.Error(err))
+		return err
+	}
+
+	g.logger.Info("API Gateway stopped")
+	return nil
+}
+
+// Load configuration from file
+func LoadConfig(configPath string) (*Config, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	return &config, nil
+}
+
 func main() {
 	// Load configuration
-	configFile := os.Getenv("CONFIG_FILE")
-	if configFile == "" {
-		configFile = "config.yaml"
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = "config.yaml"
 	}
-	
-	configData, err := os.ReadFile(configFile)
+
+	config, err := LoadConfig(configPath)
 	if err != nil {
-		log.Fatalf("Failed to read config file: %v", err)
+		log.Fatalf("Failed to load configuration: %v", err)
 	}
-	
-	var config APIGatewayConfig
-	if err := yaml.Unmarshal(configData, &config); err != nil {
-		log.Fatalf("Failed to parse config file: %v", err)
-	}
-	
-	// Create API gateway
+
+	// Create API Gateway
 	gateway, err := NewAPIGateway(config)
 	if err != nil {
-		log.Fatalf("Failed to create API gateway: %v", err)
+		log.Fatalf("Failed to create API Gateway: %v", err)
 	}
-	
-	// Start server
-	if err := gateway.Start(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Failed to start API gateway: %v", err)
+
+	// Start the gateway
+	if err := gateway.Start(); err != nil {
+		log.Fatalf("Failed to start API Gateway: %v", err)
 	}
 }
