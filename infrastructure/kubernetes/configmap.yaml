@@ -1,0 +1,183 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: t3ss-config
+  namespace: t3ss
+  labels:
+    app.kubernetes.io/name: t3ss
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: config
+data:
+  # Application Configuration
+  APP_ENV: "production"
+  APP_DEBUG: "false"
+  APP_LOG_LEVEL: "info"
+  
+  # Database Configuration
+  DB_HOST: "postgresql.t3ss.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "t3ss"
+  DB_USER: "t3ss_user"
+  DB_SSL_MODE: "require"
+  DB_POOL_SIZE: "20"
+  DB_MAX_IDLE_CONNS: "10"
+  DB_CONN_MAX_LIFETIME: "3600"
+  
+  # Redis Configuration
+  REDIS_HOST: "redis.t3ss.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ""
+  REDIS_DB: "0"
+  REDIS_POOL_SIZE: "20"
+  REDIS_MIN_IDLE_CONNS: "5"
+  
+  # Elasticsearch Configuration
+  ELASTICSEARCH_HOST: "elasticsearch.t3ss.svc.cluster.local"
+  ELASTICSEARCH_PORT: "9200"
+  ELASTICSEARCH_USERNAME: "elastic"
+  ELASTICSEARCH_INDEX_PREFIX: "t3ss"
+  ELASTICSEARCH_SHARDS: "3"
+  ELASTICSEARCH_REPLICAS: "1"
+  
+  # Kafka Configuration
+  KAFKA_BROKERS: "kafka.t3ss.svc.cluster.local:9092"
+  KAFKA_TOPIC_PREFIX: "t3ss"
+  KAFKA_CONSUMER_GROUP: "t3ss-consumer"
+  KAFKA_PARTITIONS: "3"
+  KAFKA_REPLICATION_FACTOR: "1"
+  
+  # etcd Configuration
+  ETCD_ENDPOINTS: "etcd.t3ss.svc.cluster.local:2379"
+  ETCD_DIAL_TIMEOUT: "5s"
+  ETCD_DIAL_KEEP_ALIVE_TIME: "30s"
+  ETCD_DIAL_KEEP_ALIVE_TIMEOUT: "5s"
+  
+  # gRPC Configuration
+  GRPC_PORT: "50051"
+  GRPC_MAX_RECV_MSG_SIZE: "4194304"
+  GRPC_MAX_SEND_MSG_SIZE: "4194304"
+  GRPC_KEEPALIVE_TIME: "30s"
+  GRPC_KEEPALIVE_TIMEOUT: "5s"
+  GRPC_KEEPALIVE_PERMIT_WITHOUT_STREAM: "true"
+  
+  # HTTP Configuration
+  HTTP_PORT: "8080"
+  HTTP_READ_TIMEOUT: "30s"
+  HTTP_WRITE_TIMEOUT: "30s"
+  HTTP_IDLE_TIMEOUT: "120s"
+  HTTP_MAX_HEADER_BYTES: "1048576"
+  
+  # Crawler Configuration
+  CRAWLER_MAX_CONCURRENT: "100"
+  CRAWLER_DELAY: "1s"
+  CRAWLER_TIMEOUT: "30s"
+  CRAWLER_MAX_RETRIES: "3"
+  CRAWLER_USER_AGENT: "T3SS-Bot/1.0 (+https://t3ss.qisslabs.com/bot)"
+  CRAWLER_RESPECT_ROBOTS: "true"
+  CRAWLER_MAX_PAGES_PER_DOMAIN: "1000"
+  CRAWLER_MAX_DEPTH: "10"
+  
+  # Indexer Configuration
+  INDEXER_BATCH_SIZE: "1000"
+  INDEXER_FLUSH_INTERVAL: "5s"
+  INDEXER_MAX_DOCS_PER_SHARD: "1000000"
+  INDEXER_COMPRESSION_ALGORITHM: "lz4"
+  INDEXER_MERGE_POLICY: "tiered"
+  
+  # Query Configuration
+  QUERY_MAX_RESULTS: "100"
+  QUERY_DEFAULT_RESULTS: "20"
+  QUERY_CACHE_TTL: "300s"
+  QUERY_TIMEOUT: "5s"
+  QUERY_MAX_QUERY_LENGTH: "2048"
+  
+  # Ranking Configuration
+  RANKING_ALGORITHM: "ml_ensemble"
+  RANKING_PAGERANK_ITERATIONS: "100"
+  RANKING_PAGERANK_DAMPING: "0.85"
+  RANKING_PAGERANK_TOLERANCE: "0.0001"
+  RANKING_ML_MODEL_PATH: "/models/ranking"
+  RANKING_FEATURE_CACHE_TTL: "3600s"
+  
+  # NLP Configuration
+  NLP_MODEL_PATH: "/models/nlp"
+  NLP_EMBEDDING_DIMENSION: "768"
+  NLP_MAX_SEQUENCE_LENGTH: "512"
+  NLP_BATCH_SIZE: "32"
+  NLP_CACHE_TTL: "3600s"
+  
+  # Storage Configuration
+  STORAGE_BACKEND: "s3"
+  STORAGE_BUCKET: "t3ss-storage"
+  STORAGE_REGION: "us-west-2"
+  STORAGE_ENDPOINT: ""
+  STORAGE_FORCE_PATH_STYLE: "false"
+  STORAGE_PART_SIZE: "5242880"
+  STORAGE_MAX_RETRIES: "3"
+  
+  # Cache Configuration
+  CACHE_TYPE: "redis"
+  CACHE_TTL: "3600s"
+  CACHE_MAX_SIZE: "1000"
+  CACHE_CLEANUP_INTERVAL: "300s"
+  
+  # Rate Limiting Configuration
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_REQUESTS_PER_MINUTE: "60"
+  RATE_LIMIT_BURST: "10"
+  RATE_LIMIT_WINDOW: "60s"
+  
+  # Security Configuration
+  JWT_SECRET: ""
+  JWT_EXPIRY: "24h"
+  JWT_REFRESH_EXPIRY: "168h"
+  CORS_ALLOWED_ORIGINS: "https://t3ss.qisslabs.com,https://www.t3ss.qisslabs.com"
+  CORS_ALLOWED_METHODS: "GET,POST,PUT,DELETE,OPTIONS"
+  CORS_ALLOWED_HEADERS: "Content-Type,Authorization,X-Requested-With"
+  CORS_MAX_AGE: "86400"
+  
+  # Monitoring Configuration
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  METRICS_PATH: "/metrics"
+  TRACING_ENABLED: "true"
+  TRACING_SAMPLE_RATE: "0.1"
+  LOGGING_FORMAT: "json"
+  LOGGING_LEVEL: "info"
+  
+  # Feature Flags
+  FEATURE_VOICE_SEARCH: "true"
+  FEATURE_IMAGE_SEARCH: "true"
+  FEATURE_REAL_TIME_UPDATES: "true"
+  FEATURE_PERSONALIZATION: "true"
+  FEATURE_ANALYTICS: "true"
+  FEATURE_AB_TESTING: "true"
+  
+  # External Services
+  GOOGLE_OAUTH_CLIENT_ID: ""
+  GOOGLE_OAUTH_CLIENT_SECRET: ""
+  GITHUB_OAUTH_CLIENT_ID: ""
+  GITHUB_OAUTH_CLIENT_SECRET: ""
+  STRIPE_PUBLISHABLE_KEY: ""
+  STRIPE_SECRET_KEY: ""
+  STRIPE_WEBHOOK_SECRET: ""
+  
+  # AI/ML Services
+  OPENAI_API_KEY: ""
+  OPENAI_MODEL: "gpt-4"
+  OPENAI_MAX_TOKENS: "2048"
+  OPENAI_TEMPERATURE: "0.7"
+  HUGGINGFACE_API_KEY: ""
+  HUGGINGFACE_MODEL: "sentence-transformers/all-MiniLM-L6-v2"
+  
+  # CDN Configuration
+  CDN_ENABLED: "true"
+  CDN_BASE_URL: "https://cdn.t3ss.qisslabs.com"
+  CDN_CACHE_TTL: "86400"
+  
+  # Backup Configuration
+  BACKUP_ENABLED: "true"
+  BACKUP_SCHEDULE: "0 2 * * *"
+  BACKUP_RETENTION_DAYS: "30"
+  BACKUP_S3_BUCKET: "t3ss-backups"
+  BACKUP_S3_REGION: "us-west-2"

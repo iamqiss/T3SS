@@ -1,0 +1,469 @@
+name: T3SS CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  release:
+    types: [ published ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Security and Quality Checks
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+    
+    - name: Run Semgrep
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: >-
+          p/security-audit
+          p/secrets
+          p/owasp-top-ten
+        generateSarif: "1"
+    
+    - name: Upload Semgrep results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: semgrep.sarif
+
+  # Code Quality and Testing
+  quality-checks:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        components: rustfmt, clippy
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        # Go dependencies
+        go mod download
+        
+        # Python dependencies
+        pip install -r requirements.txt
+        
+        # Rust dependencies
+        cargo fetch
+    
+    - name: Run Go tests
+      run: |
+        go test -v -race -coverprofile=coverage.out ./...
+        go tool cover -html=coverage.out -o coverage.html
+    
+    - name: Run Rust tests
+      run: |
+        cargo test --verbose
+        cargo clippy -- -D warnings
+        cargo fmt -- --check
+    
+    - name: Run Python tests
+      run: |
+        pytest --cov=. --cov-report=xml --cov-report=html
+    
+    - name: Run linting
+      run: |
+        # Go linting
+        golangci-lint run
+        
+        # Python linting
+        flake8 .
+        black --check .
+        isort --check-only .
+        
+        # Type checking
+        mypy .
+    
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  # Build and Test Docker Images
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [security-scan, quality-checks]
+    strategy:
+      matrix:
+        service: [
+          api-gateway,
+          crawler,
+          indexer,
+          query-processor,
+          ranking-service,
+          nlp-service,
+          storage-service,
+          auth-service,
+          analytics-service,
+          monitoring-service
+        ]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix={{branch}}-
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./docker/${{ matrix.service }}/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+
+  # Deploy to Development
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    if: github.ref == 'refs/heads/develop'
+    environment: development
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+    
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig --region us-west-2 --name t3ss-cluster-dev
+    
+    - name: Deploy to Kubernetes
+      run: |
+        # Update image tags in Kubernetes manifests
+        find ./infrastructure/kubernetes -name "*.yaml" -exec sed -i "s|t3ss/${{ matrix.service }}:latest|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:${{ github.sha }}|g" {} \;
+        
+        # Apply Kubernetes manifests
+        kubectl apply -f ./infrastructure/kubernetes/namespace.yaml
+        kubectl apply -f ./infrastructure/kubernetes/configmap.yaml
+        kubectl apply -f ./infrastructure/kubernetes/secrets.yaml
+        kubectl apply -f ./infrastructure/kubernetes/rbac.yaml
+        kubectl apply -f ./infrastructure/kubernetes/
+        
+        # Wait for deployment to complete
+        kubectl rollout status deployment/api-gateway -n t3ss --timeout=600s
+        kubectl rollout status deployment/crawler -n t3ss --timeout=600s
+        kubectl rollout status deployment/indexer -n t3ss --timeout=600s
+        kubectl rollout status deployment/query-processor -n t3ss --timeout=600s
+        kubectl rollout status deployment/ranking-service -n t3ss --timeout=600s
+        kubectl rollout status deployment/nlp-service -n t3ss --timeout=600s
+        kubectl rollout status deployment/storage-service -n t3ss --timeout=600s
+        kubectl rollout status deployment/auth-service -n t3ss --timeout=600s
+        kubectl rollout status deployment/analytics-service -n t3ss --timeout=600s
+        kubectl rollout status deployment/monitoring-service -n t3ss --timeout=600s
+    
+    - name: Run smoke tests
+      run: |
+        # Wait for services to be ready
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=api-gateway -n t3ss --timeout=300s
+        
+        # Run basic health checks
+        kubectl get pods -n t3ss
+        kubectl get services -n t3ss
+        
+        # Test API endpoint
+        API_URL=$(kubectl get service api-gateway -n t3ss -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        curl -f http://$API_URL/health || exit 1
+
+  # Deploy to Production
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+    
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig --region us-west-2 --name t3ss-cluster-prod
+    
+    - name: Deploy to Kubernetes
+      run: |
+        # Update image tags in Kubernetes manifests
+        find ./infrastructure/kubernetes -name "*.yaml" -exec sed -i "s|t3ss/${{ matrix.service }}:latest|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:${{ github.sha }}|g" {} \;
+        
+        # Apply Kubernetes manifests
+        kubectl apply -f ./infrastructure/kubernetes/namespace.yaml
+        kubectl apply -f ./infrastructure/kubernetes/configmap.yaml
+        kubectl apply -f ./infrastructure/kubernetes/secrets.yaml
+        kubectl apply -f ./infrastructure/kubernetes/rbac.yaml
+        kubectl apply -f ./infrastructure/kubernetes/
+        
+        # Wait for deployment to complete
+        kubectl rollout status deployment/api-gateway -n t3ss --timeout=600s
+        kubectl rollout status deployment/crawler -n t3ss --timeout=600s
+        kubectl rollout status deployment/indexer -n t3ss --timeout=600s
+        kubectl rollout status deployment/query-processor -n t3ss --timeout=600s
+        kubectl rollout status deployment/ranking-service -n t3ss --timeout=600s
+        kubectl rollout status deployment/nlp-service -n t3ss --timeout=600s
+        kubectl rollout status deployment/storage-service -n t3ss --timeout=600s
+        kubectl rollout status deployment/auth-service -n t3ss --timeout=600s
+        kubectl rollout status deployment/analytics-service -n t3ss --timeout=600s
+        kubectl rollout status deployment/monitoring-service -n t3ss --timeout=600s
+    
+    - name: Run comprehensive tests
+      run: |
+        # Wait for services to be ready
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=api-gateway -n t3ss --timeout=300s
+        
+        # Run health checks
+        kubectl get pods -n t3ss
+        kubectl get services -n t3ss
+        
+        # Test API endpoint
+        API_URL=$(kubectl get service api-gateway -n t3ss -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        curl -f http://$API_URL/health || exit 1
+        
+        # Run integration tests
+        pytest tests/integration/ --timeout=300
+    
+    - name: Notify deployment
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#deployments'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      if: always()
+
+  # Infrastructure as Code
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.0
+    
+    - name: Terraform Init
+      run: |
+        cd infrastructure/terraform
+        terraform init
+    
+    - name: Terraform Plan
+      run: |
+        cd infrastructure/terraform
+        terraform plan -out=tfplan
+    
+    - name: Comment PR with Terraform Plan
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const plan = fs.readFileSync('infrastructure/terraform/tfplan', 'utf8');
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `## Terraform Plan\n\`\`\`\n${plan}\n\`\`\``
+          });
+
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: [terraform-plan]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.0
+    
+    - name: Terraform Init
+      run: |
+        cd infrastructure/terraform
+        terraform init
+    
+    - name: Terraform Apply
+      run: |
+        cd infrastructure/terraform
+        terraform apply -auto-approve
+
+  # Performance Testing
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-dev]
+    if: github.ref == 'refs/heads/develop'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install locust
+    
+    - name: Run performance tests
+      run: |
+        # Start performance tests
+        locust -f tests/performance/locustfile.py --host=http://dev.t3ss.qisslabs.com --users=100 --spawn-rate=10 --run-time=5m --headless --html=performance-report.html
+    
+    - name: Upload performance report
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-report
+        path: performance-report.html
+
+  # Security Testing
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-dev]
+    if: github.ref == 'refs/heads/develop'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install bandit safety
+    
+    - name: Run security tests
+      run: |
+        # Run bandit security linter
+        bandit -r . -f json -o bandit-report.json
+        
+        # Run safety check
+        safety check --json --output safety-report.json
+    
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  # Cleanup
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [deploy-prod, performance-tests, security-tests]
+    if: always()
+    steps:
+    - name: Cleanup old images
+      run: |
+        # Clean up old Docker images from registry
+        echo "Cleaning up old images..."
+        
+    - name: Cleanup old deployments
+      run: |
+        # Clean up old Kubernetes deployments
+        echo "Cleaning up old deployments..."

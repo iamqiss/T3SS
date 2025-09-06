@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: t3ss
+  labels:
+    name: t3ss
+    app.kubernetes.io/name: t3ss
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: infrastructure
+    app.kubernetes.io/part-of: t3ss-search-engine
+    app.kubernetes.io/managed-by: kubernetes
+  annotations:
+    description: "T3SS Search Engine namespace"
+    contact: "dev@qisslabs.com"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: t3ss-quota
+  namespace: t3ss
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    persistentvolumeclaims: "10"
+    services: "20"
+    secrets: "10"
+    configmaps: "20"
+    pods: "100"
+    replicationcontrollers: "10"
+    resourcequotas: "1"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: t3ss-limits
+  namespace: t3ss
+spec:
+  limits:
+  - default:
+      cpu: "2"
+      memory: "4Gi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    type: Container
+  - max:
+      cpu: "8"
+      memory: "16Gi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+    type: Container
+  - max:
+      storage: "100Gi"
+    min:
+      storage: "1Gi"
+    type: PersistentVolumeClaim

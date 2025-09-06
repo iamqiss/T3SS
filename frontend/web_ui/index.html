@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>T3SS - The Tier-3 Search System</title>
+    <meta name="description" content="Advanced search engine with AI-powered results and real-time updates">
+    <meta name="keywords" content="search, AI, machine learning, semantic search, T3SS">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/search.css">
+    <link rel="stylesheet" href="/css/responsive.css">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Meta tags for social sharing -->
+    <meta property="og:title" content="T3SS - Advanced Search Engine">
+    <meta property="og:description" content="AI-powered search with semantic understanding and real-time results">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://t3ss.com">
+    <meta property="og:image" content="/images/og-image.png">
+    
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="T3SS - Advanced Search Engine">
+    <meta name="twitter:description" content="AI-powered search with semantic understanding and real-time results">
+    <meta name="twitter:image" content="/images/og-image.png">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <a href="/">
+                        <img src="/images/logo.svg" alt="T3SS" class="logo-img">
+                        <span class="logo-text">T3SS</span>
+                    </a>
+                </div>
+                
+                <nav class="nav">
+                    <ul class="nav-list">
+                        <li class="nav-item">
+                            <a href="/search" class="nav-link active">
+                                <i class="fas fa-search"></i>
+                                Search
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/images" class="nav-link">
+                                <i class="fas fa-image"></i>
+                                Images
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/news" class="nav-link">
+                                <i class="fas fa-newspaper"></i>
+                                News
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/maps" class="nav-link">
+                                <i class="fas fa-map"></i>
+                                Maps
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a href="/scholarly" class="nav-link">
+                                <i class="fas fa-graduation-cap"></i>
+                                Scholarly
+                            </a>
+                        </li>
+                    </ul>
+                </nav>
+                
+                <div class="header-actions">
+                    <button class="btn btn-ghost" id="settingsBtn">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                    <button class="btn btn-primary" id="signInBtn">
+                        <i class="fas fa-user"></i>
+                        Sign In
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <div class="container">
+            <!-- Search Section -->
+            <section class="search-section">
+                <div class="search-container">
+                    <h1 class="search-title">Search the Web with AI</h1>
+                    <p class="search-subtitle">Get intelligent, contextual results powered by advanced machine learning</p>
+                    
+                    <!-- Search Form -->
+                    <form class="search-form" id="searchForm">
+                        <div class="search-input-container">
+                            <div class="search-input-wrapper">
+                                <input 
+                                    type="text" 
+                                    class="search-input" 
+                                    id="searchInput"
+                                    placeholder="Search for anything..."
+                                    autocomplete="off"
+                                    spellcheck="false"
+                                >
+                                <button type="button" class="search-voice-btn" id="voiceBtn" title="Voice search">
+                                    <i class="fas fa-microphone"></i>
+                                </button>
+                                <button type="button" class="search-camera-btn" id="cameraBtn" title="Image search">
+                                    <i class="fas fa-camera"></i>
+                                </button>
+                            </div>
+                            <button type="submit" class="search-btn" id="searchBtn">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- Search Suggestions -->
+                        <div class="search-suggestions" id="searchSuggestions">
+                            <!-- Suggestions will be populated dynamically -->
+                        </div>
+                    </form>
+                    
+                    <!-- Search Filters -->
+                    <div class="search-filters" id="searchFilters">
+                        <div class="filter-group">
+                            <label class="filter-label">Time:</label>
+                            <select class="filter-select" id="timeFilter">
+                                <option value="">Any time</option>
+                                <option value="hour">Past hour</option>
+                                <option value="day">Past 24 hours</option>
+                                <option value="week">Past week</option>
+                                <option value="month">Past month</option>
+                                <option value="year">Past year</option>
+                            </select>
+                        </div>
+                        
+                        <div class="filter-group">
+                            <label class="filter-label">Language:</label>
+                            <select class="filter-select" id="languageFilter">
+                                <option value="">Any language</option>
+                                <option value="en">English</option>
+                                <option value="es">Spanish</option>
+                                <option value="fr">French</option>
+                                <option value="de">German</option>
+                                <option value="zh">Chinese</option>
+                                <option value="ja">Japanese</option>
+                            </select>
+                        </div>
+                        
+                        <div class="filter-group">
+                            <label class="filter-label">Region:</label>
+                            <select class="filter-select" id="regionFilter">
+                                <option value="">Any region</option>
+                                <option value="us">United States</option>
+                                <option value="uk">United Kingdom</option>
+                                <option value="ca">Canada</option>
+                                <option value="au">Australia</option>
+                                <option value="de">Germany</option>
+                                <option value="fr">France</option>
+                            </select>
+                        </div>
+                        
+                        <div class="filter-group">
+                            <label class="filter-label">Safe Search:</label>
+                            <select class="filter-select" id="safeSearchFilter">
+                                <option value="moderate">Moderate</option>
+                                <option value="strict">Strict</option>
+                                <option value="off">Off</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Search Results -->
+            <section class="results-section" id="resultsSection" style="display: none;">
+                <div class="results-header">
+                    <div class="results-info">
+                        <span class="results-count" id="resultsCount">About 0 results</span>
+                        <span class="results-time" id="resultsTime">(0.00 seconds)</span>
+                    </div>
+                    
+                    <div class="results-actions">
+                        <button class="btn btn-ghost" id="sortBtn">
+                            <i class="fas fa-sort"></i>
+                            Sort
+                        </button>
+                        <button class="btn btn-ghost" id="viewBtn">
+                            <i class="fas fa-th"></i>
+                            View
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Results Container -->
+                <div class="results-container" id="resultsContainer">
+                    <!-- Results will be populated dynamically -->
+                </div>
+                
+                <!-- Pagination -->
+                <div class="pagination" id="pagination">
+                    <!-- Pagination will be populated dynamically -->
+                </div>
+            </section>
+
+            <!-- Related Searches -->
+            <section class="related-section" id="relatedSection" style="display: none;">
+                <h3 class="related-title">Related Searches</h3>
+                <div class="related-searches" id="relatedSearches">
+                    <!-- Related searches will be populated dynamically -->
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4 class="footer-title">Search</h4>
+                    <ul class="footer-links">
+                        <li><a href="/search">Web Search</a></li>
+                        <li><a href="/images">Image Search</a></li>
+                        <li><a href="/news">News Search</a></li>
+                        <li><a href="/maps">Maps</a></li>
+                        <li><a href="/scholarly">Scholarly</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-section">
+                    <h4 class="footer-title">Tools</h4>
+                    <ul class="footer-links">
+                        <li><a href="/advanced">Advanced Search</a></li>
+                        <li><a href="/api">API</a></li>
+                        <li><a href="/developer">Developer Tools</a></li>
+                        <li><a href="/analytics">Analytics</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-section">
+                    <h4 class="footer-title">Company</h4>
+                    <ul class="footer-links">
+                        <li><a href="/about">About</a></li>
+                        <li><a href="/careers">Careers</a></li>
+                        <li><a href="/press">Press</a></li>
+                        <li><a href="/contact">Contact</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-section">
+                    <h4 class="footer-title">Legal</h4>
+                    <ul class="footer-links">
+                        <li><a href="/privacy">Privacy Policy</a></li>
+                        <li><a href="/terms">Terms of Service</a></li>
+                        <li><a href="/cookies">Cookie Policy</a></li>
+                        <li><a href="/dmca">DMCA</a></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="footer-bottom">
+                <div class="footer-copyright">
+                    <p>&copy; 2025 T3SS. All rights reserved.</p>
+                </div>
+                
+                <div class="footer-social">
+                    <a href="#" class="social-link" title="Twitter">
+                        <i class="fab fa-twitter"></i>
+                    </a>
+                    <a href="#" class="social-link" title="LinkedIn">
+                        <i class="fab fa-linkedin"></i>
+                    </a>
+                    <a href="#" class="social-link" title="GitHub">
+                        <i class="fab fa-github"></i>
+                    </a>
+                    <a href="#" class="social-link" title="Discord">
+                        <i class="fab fa-discord"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p class="loading-text">Searching...</p>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Settings</h2>
+                <button class="modal-close" id="settingsClose">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h3 class="settings-title">Search Preferences</h3>
+                    
+                    <div class="setting-item">
+                        <label class="setting-label">Results per page:</label>
+                        <select class="setting-select" id="resultsPerPage">
+                            <option value="10">10</option>
+                            <option value="20" selected>20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label class="setting-label">Default language:</label>
+                        <select class="setting-select" id="defaultLanguage">
+                            <option value="en" selected>English</option>
+                            <option value="es">Spanish</option>
+                            <option value="fr">French</option>
+                            <option value="de">German</option>
+                        </select>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label class="setting-label">Safe search:</label>
+                        <select class="setting-select" id="defaultSafeSearch">
+                            <option value="moderate" selected>Moderate</option>
+                            <option value="strict">Strict</option>
+                            <option value="off">Off</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3 class="settings-title">Appearance</h3>
+                    
+                    <div class="setting-item">
+                        <label class="setting-label">Theme:</label>
+                        <select class="setting-select" id="theme">
+                            <option value="light" selected>Light</option>
+                            <option value="dark">Dark</option>
+                            <option value="auto">Auto</option>
+                        </select>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label class="setting-label">Font size:</label>
+                        <select class="setting-select" id="fontSize">
+                            <option value="small">Small</option>
+                            <option value="medium" selected>Medium</option>
+                            <option value="large">Large</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="settingsCancel">Cancel</button>
+                <button class="btn btn-primary" id="settingsSave">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="/js/utils.js"></script>
+    <script src="/js/api.js"></script>
+    <script src="/js/search.js"></script>
+    <script src="/js/ui.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>

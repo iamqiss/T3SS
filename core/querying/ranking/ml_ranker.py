@@ -1,643 +1,668 @@
-# T3SS Project
-# File: core/querying/ranking/ml_ranker.py
-# (c) 2025 Qiss Labs. All Rights Reserved.
-# Unauthorized copying or distribution of this file is strictly prohibited.
-# For internal use only.
+#!/usr/bin/env python3
+"""
+T3SS Project
+File: core/querying/ranking/ml_ranker.py
+(c) 2025 Qiss Labs. All Rights Reserved.
+Unauthorized copying or distribution of this file is strictly prohibited.
+For internal use only.
+"""
 
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Tuple, Optional, Any
-from dataclasses import dataclass, field
-from collections import defaultdict, deque
-import asyncio
-import threading
-import time
+from typing import Dict, List, Tuple, Optional, Any
 import logging
-from concurrent.futures import ThreadPoolExecutor
 import pickle
 import json
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.linear_model import LinearRegression, Ridge
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+import time
+from datetime import datetime, timedelta
+from dataclasses import dataclass, asdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from collections import defaultdict, deque
+import hashlib
+
+# ML Libraries
 import xgboost as xgb
 import lightgbm as lgb
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.feature_extraction.text import TfidfVectorizer
+import joblib
 
-logger = logging.getLogger(__name__)
+# Deep Learning
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+import transformers
+from sentence_transformers import SentenceTransformer
+
+# Async and Performance
+import asyncio
+import aiohttp
+import redis
+from prometheus_client import Counter, Histogram, Gauge, start_http_server
+
+# Configuration
+@dataclass
+class RankingConfig:
+    """Configuration for ML ranking system"""
+    # Model settings
+    enable_xgboost: bool = True
+    enable_lightgbm: bool = True
+    enable_random_forest: bool = True
+    enable_linear_models: bool = True
+    enable_deep_learning: bool = True
+    
+    # Feature settings
+    enable_text_features: bool = True
+    enable_link_features: bool = True
+    enable_user_features: bool = True
+    enable_temporal_features: bool = True
+    enable_semantic_features: bool = True
+    
+    # Performance settings
+    max_features: int = 1000
+    batch_size: int = 1000
+    max_workers: int = 4
+    cache_size: int = 10000
+    model_update_interval: int = 3600  # 1 hour
+    
+    # Model parameters
+    xgb_params: Dict = None
+    lgb_params: Dict = None
+    rf_params: Dict = None
+    
+    def __post_init__(self):
+        if self.xgb_params is None:
+            self.xgb_params = {
+                'max_depth': 6,
+                'learning_rate': 0.1,
+                'n_estimators': 100,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'random_state': 42
+            }
+        
+        if self.lgb_params is None:
+            self.lgb_params = {
+                'max_depth': 6,
+                'learning_rate': 0.1,
+                'n_estimators': 100,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'random_state': 42
+            }
+        
+        if self.rf_params is None:
+            self.rf_params = {
+                'n_estimators': 100,
+                'max_depth': 10,
+                'random_state': 42
+            }
 
 @dataclass
-class RankingFeatures:
-    """Features used for ML-based ranking"""
-    # Query features
-    query_length: int
-    query_complexity: float
-    query_type: str  # 'navigational', 'informational', 'transactional'
-    
-    # Document features
+class Document:
+    """Document representation for ranking"""
     doc_id: str
-    title_relevance: float
-    content_relevance: float
-    url_relevance: float
-    domain_authority: float
-    page_rank: float
-    content_freshness: float
+    url: str
+    title: str
+    content: str
+    domain: str
+    content_type: str
+    language: str
+    timestamp: int
     content_length: int
-    content_quality: float
-    
-    # User interaction features
-    click_through_rate: float
-    dwell_time: float
-    bounce_rate: float
-    user_satisfaction: float
-    
-    # Contextual features
-    user_location: str
-    user_device: str
-    time_of_day: int
-    day_of_week: int
-    search_history: List[str] = field(default_factory=list)
-    
-    # Advanced features
-    semantic_similarity: float
-    entity_relevance: float
-    sentiment_score: float
-    language_match: float
+    in_links: int = 0
+    out_links: int = 0
+    page_rank: float = 0.0
+    click_count: int = 0
+    impression_count: int = 0
+    bounce_rate: float = 0.0
+    dwell_time: float = 0.0
+    quality_score: float = 0.0
+    freshness_score: float = 0.0
+    authority_score: float = 0.0
+    relevance_score: float = 0.0
+    metadata: Dict[str, Any] = None
+
+@dataclass
+class Query:
+    """Query representation for ranking"""
+    query_id: str
+    text: str
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    timestamp: int = None
+    intent: str = "informational"
+    location: Optional[str] = None
+    device_type: str = "desktop"
+    language: str = "en"
+    filters: Dict[str, Any] = None
 
 @dataclass
 class RankingResult:
-    """Result of ML ranking"""
+    """Ranking result with score and explanation"""
     doc_id: str
     score: float
-    confidence: float
+    model_scores: Dict[str, float]
     feature_importance: Dict[str, float]
     explanation: str
+    confidence: float
+
+class FeatureExtractor:
+    """Extracts features for ML ranking models"""
+    
+    def __init__(self, config: RankingConfig):
+        self.config = config
+        self.tfidf_vectorizer = TfidfVectorizer(
+            max_features=config.max_features,
+            stop_words='english',
+            ngram_range=(1, 2)
+        )
+        self.sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2')
+        self.scaler = StandardScaler()
+        self.label_encoders = {}
+        self.feature_names = []
+        
+    def extract_features(self, query: Query, documents: List[Document]) -> np.ndarray:
+        """Extract features for query-document pairs"""
+        features = []
+        
+        for doc in documents:
+            doc_features = []
+            
+            # Text features
+            if self.config.enable_text_features:
+                doc_features.extend(self._extract_text_features(query, doc))
+            
+            # Link features
+            if self.config.enable_link_features:
+                doc_features.extend(self._extract_link_features(doc))
+            
+            # User features
+            if self.config.enable_user_features:
+                doc_features.extend(self._extract_user_features(query, doc))
+            
+            # Temporal features
+            if self.config.enable_temporal_features:
+                doc_features.extend(self._extract_temporal_features(query, doc))
+            
+            # Semantic features
+            if self.config.enable_semantic_features:
+                doc_features.extend(self._extract_semantic_features(query, doc))
+            
+            features.append(doc_features)
+        
+        return np.array(features)
+    
+    def _extract_text_features(self, query: Query, doc: Document) -> List[float]:
+        """Extract text-based features"""
+        features = []
+        
+        # Query-document similarity
+        query_terms = set(query.text.lower().split())
+        doc_terms = set((doc.title + " " + doc.content).lower().split())
+        
+        # Term overlap
+        overlap = len(query_terms.intersection(doc_terms))
+        features.append(overlap / len(query_terms) if query_terms else 0)
+        
+        # Title match
+        title_match = any(term in doc.title.lower() for term in query_terms)
+        features.append(1.0 if title_match else 0.0)
+        
+        # Content length
+        features.append(np.log1p(doc.content_length))
+        
+        # Language match
+        features.append(1.0 if query.language == doc.language else 0.0)
+        
+        # Content type relevance
+        content_type_scores = {
+            'text/html': 1.0,
+            'application/pdf': 0.8,
+            'text/plain': 0.6,
+            'application/json': 0.4
+        }
+        features.append(content_type_scores.get(doc.content_type, 0.5))
+        
+        return features
+    
+    def _extract_link_features(self, doc: Document) -> List[float]:
+        """Extract link-based features"""
+        features = []
+        
+        # PageRank
+        features.append(doc.page_rank)
+        
+        # In-link count
+        features.append(np.log1p(doc.in_links))
+        
+        # Out-link count
+        features.append(np.log1p(doc.out_links))
+        
+        # Authority score
+        features.append(doc.authority_score)
+        
+        return features
+    
+    def _extract_user_features(self, query: Query, doc: Document) -> List[float]:
+        """Extract user behavior features"""
+        features = []
+        
+        # Click-through rate
+        ctr = doc.click_count / max(doc.impression_count, 1)
+        features.append(ctr)
+        
+        # Bounce rate (inverted)
+        features.append(1.0 - doc.bounce_rate)
+        
+        # Dwell time
+        features.append(np.log1p(doc.dwell_time))
+        
+        # Quality score
+        features.append(doc.quality_score)
+        
+        return features
+    
+    def _extract_temporal_features(self, query: Query, doc: Document) -> List[float]:
+        """Extract temporal features"""
+        features = []
+        
+        # Document age
+        current_time = time.time()
+        doc_age = (current_time - doc.timestamp) / (24 * 3600)  # days
+        features.append(np.log1p(doc_age))
+        
+        # Freshness score
+        features.append(doc.freshness_score)
+        
+        # Time-based relevance (e.g., news articles)
+        if doc.content_type == 'news':
+            # Recent news gets higher score
+            freshness = max(0, 1 - doc_age / 7)  # 7 days decay
+            features.append(freshness)
+        else:
+            features.append(0.0)
+        
+        return features
+    
+    def _extract_semantic_features(self, query: Query, doc: Document) -> List[float]:
+        """Extract semantic features using embeddings"""
+        features = []
+        
+        try:
+            # Generate embeddings
+            query_embedding = self.sentence_transformer.encode([query.text])
+            doc_embedding = self.sentence_transformer.encode([doc.title + " " + doc.content])
+            
+            # Cosine similarity
+            similarity = np.dot(query_embedding[0], doc_embedding[0]) / (
+                np.linalg.norm(query_embedding[0]) * np.linalg.norm(doc_embedding[0])
+            )
+            features.append(similarity)
+            
+            # Relevance score
+            features.append(doc.relevance_score)
+            
+        except Exception as e:
+            logging.warning(f"Failed to extract semantic features: {e}")
+            features.extend([0.0, 0.0])
+        
+        return features
+
+class DeepLearningRanker(nn.Module):
+    """Deep learning model for ranking"""
+    
+    def __init__(self, input_dim: int, hidden_dims: List[int] = [512, 256, 128]):
+        super(DeepLearningRanker, self).__init__()
+        
+        layers = []
+        prev_dim = input_dim
+        
+        for hidden_dim in hidden_dims:
+            layers.extend([
+                nn.Linear(prev_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+                nn.BatchNorm1d(hidden_dim)
+            ])
+            prev_dim = hidden_dim
+        
+        layers.append(nn.Linear(prev_dim, 1))
+        
+        self.network = nn.Sequential(*layers)
+    
+    def forward(self, x):
+        return self.network(x).squeeze()
 
 class MLRanker:
-    """
-    Advanced ML-based ranking system with real-time learning capabilities.
+    """Main ML ranking system with multiple models"""
     
-    Features:
-    - Multiple ML models (XGBoost, LightGBM, Random Forest)
-    - Real-time feature engineering
-    - Online learning and model updates
-    - Feature importance tracking
-    - A/B testing framework
-    - Performance monitoring
-    """
-    
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: RankingConfig):
         self.config = config
+        self.feature_extractor = FeatureExtractor(config)
         self.models = {}
-        self.feature_scalers = {}
-        self.feature_importance = defaultdict(float)
-        self.training_data = deque(maxlen=config.get('max_training_samples', 100000))
-        self.performance_metrics = defaultdict(list)
-        self.model_lock = threading.RLock()
-        self.is_training = False
+        self.model_weights = {}
+        self.feature_importance = {}
+        self.cache = {}
+        self.redis_client = None
+        self.lock = threading.Lock()
+        
+        # Metrics
+        self.ranking_counter = Counter('ranking_requests_total', 'Total ranking requests')
+        self.ranking_duration = Histogram('ranking_duration_seconds', 'Ranking duration')
+        self.model_accuracy = Gauge('model_accuracy', 'Model accuracy', ['model_name'])
         
         # Initialize models
         self._initialize_models()
         
-        # Start background training thread
-        self._start_background_training()
+        # Start background tasks
+        self._start_background_tasks()
     
     def _initialize_models(self):
-        """Initialize ML models"""
-        model_config = self.config.get('models', {})
+        """Initialize all ML models"""
+        if self.config.enable_xgboost:
+            self.models['xgboost'] = xgb.XGBRegressor(**self.config.xgb_params)
+            self.model_weights['xgboost'] = 0.3
         
-        # XGBoost model
-        if model_config.get('enable_xgboost', True):
-            self.models['xgboost'] = xgb.XGBRegressor(
-                n_estimators=model_config.get('xgboost_estimators', 100),
-                max_depth=model_config.get('xgboost_depth', 6),
-                learning_rate=model_config.get('xgboost_lr', 0.1),
-                subsample=model_config.get('xgboost_subsample', 0.8),
-                colsample_bytree=model_config.get('xgboost_colsample', 0.8),
-                random_state=42
-            )
+        if self.config.enable_lightgbm:
+            self.models['lightgbm'] = lgb.LGBMRegressor(**self.config.lgb_params)
+            self.model_weights['lightgbm'] = 0.3
         
-        # LightGBM model
-        if model_config.get('enable_lightgbm', True):
-            self.models['lightgbm'] = lgb.LGBMRegressor(
-                n_estimators=model_config.get('lightgbm_estimators', 100),
-                max_depth=model_config.get('lightgbm_depth', 6),
-                learning_rate=model_config.get('lightgbm_lr', 0.1),
-                subsample=model_config.get('lightgbm_subsample', 0.8),
-                colsample_bytree=model_config.get('lightgbm_colsample', 0.8),
-                random_state=42,
-                verbose=-1
-            )
+        if self.config.enable_random_forest:
+            self.models['random_forest'] = RandomForestRegressor(**self.config.rf_params)
+            self.model_weights['random_forest'] = 0.2
         
-        # Random Forest model
-        if model_config.get('enable_random_forest', True):
-            self.models['random_forest'] = RandomForestRegressor(
-                n_estimators=model_config.get('rf_estimators', 100),
-                max_depth=model_config.get('rf_depth', 10),
-                random_state=42,
-                n_jobs=-1
-            )
+        if self.config.enable_linear_models:
+            self.models['ridge'] = Ridge(alpha=1.0)
+            self.models['lasso'] = Lasso(alpha=0.1)
+            self.model_weights['ridge'] = 0.1
+            self.model_weights['lasso'] = 0.1
         
-        # Linear model for baseline
-        if model_config.get('enable_linear', True):
-            self.models['linear'] = Ridge(alpha=1.0)
-        
-        # Initialize feature scalers
-        for model_name in self.models.keys():
-            self.feature_scalers[model_name] = StandardScaler()
+        if self.config.enable_deep_learning:
+            # Will be initialized after feature extraction
+            self.model_weights['deep_learning'] = 0.2
     
-    def _start_background_training(self):
-        """Start background thread for continuous model training"""
-        def training_loop():
+    def _start_background_tasks(self):
+        """Start background tasks for model updates and monitoring"""
+        def update_models():
             while True:
+                time.sleep(self.config.model_update_interval)
+                self._update_models()
+        
+        def monitor_performance():
+            while True:
+                time.sleep(300)  # 5 minutes
+                self._monitor_performance()
+        
+        threading.Thread(target=update_models, daemon=True).start()
+        threading.Thread(target=monitor_performance, daemon=True).start()
+    
+    async def rank_documents(self, query: Query, documents: List[Document]) -> List[RankingResult]:
+        """Rank documents for a given query"""
+        start_time = time.time()
+        self.ranking_counter.inc()
+        
+        try:
+            # Check cache first
+            cache_key = self._generate_cache_key(query, documents)
+            if cache_key in self.cache:
+                return self.cache[cache_key]
+            
+            # Extract features
+            features = self.feature_extractor.extract_features(query, documents)
+            
+            if features.size == 0:
+                return []
+            
+            # Get predictions from all models
+            predictions = {}
+            model_scores = {}
+            
+            for model_name, model in self.models.items():
                 try:
-                    if len(self.training_data) >= self.config.get('min_training_samples', 1000):
-                        self._train_models()
-                    time.sleep(self.config.get('training_interval', 300))  # 5 minutes
+                    if hasattr(model, 'predict'):
+                        pred = model.predict(features)
+                        predictions[model_name] = pred
+                        model_scores[model_name] = pred
                 except Exception as e:
-                    logger.error(f"Error in background training: {e}")
-                    time.sleep(60)  # Wait 1 minute before retrying
-        
-        training_thread = threading.Thread(target=training_loop, daemon=True)
-        training_thread.start()
-    
-    async def rank_documents(
-        self, 
-        query: str, 
-        documents: List[Dict[str, Any]], 
-        user_context: Dict[str, Any] = None
-    ) -> List[RankingResult]:
-        """
-        Rank documents using ML models with real-time feature engineering
-        """
-        if not documents:
+                    logging.warning(f"Model {model_name} prediction failed: {e}")
+                    continue
+            
+            # Ensemble prediction
+            final_scores = self._ensemble_predictions(predictions)
+            
+            # Create ranking results
+            results = []
+            for i, (doc, score) in enumerate(zip(documents, final_scores)):
+                result = RankingResult(
+                    doc_id=doc.doc_id,
+                    score=float(score),
+                    model_scores={name: float(scores[i]) for name, scores in model_scores.items()},
+                    feature_importance=self._get_feature_importance(documents[i]),
+                    explanation=self._generate_explanation(query, doc, score),
+                    confidence=self._calculate_confidence(predictions, i)
+                )
+                results.append(result)
+            
+            # Sort by score
+            results.sort(key=lambda x: x.score, reverse=True)
+            
+            # Cache results
+            self.cache[cache_key] = results
+            if len(self.cache) > self.config.cache_size:
+                # Remove oldest entries
+                oldest_key = next(iter(self.cache))
+                del self.cache[oldest_key]
+            
+            # Record metrics
+            duration = time.time() - start_time
+            self.ranking_duration.observe(duration)
+            
+            return results
+            
+        except Exception as e:
+            logging.error(f"Ranking failed: {e}")
             return []
-        
-        # Extract features for all documents
-        features_list = []
-        for doc in documents:
-            features = self._extract_features(query, doc, user_context)
-            features_list.append(features)
-        
-        # Convert to feature matrix
-        feature_matrix = self._features_to_matrix(features_list)
-        
-        # Get predictions from all models
-        predictions = {}
-        for model_name, model in self.models.items():
-            try:
-                if hasattr(model, 'predict'):
-                    # Scale features
-                    scaled_features = self.feature_scalers[model_name].transform(feature_matrix)
-                    pred = model.predict(scaled_features)
-                    predictions[model_name] = pred
-            except Exception as e:
-                logger.error(f"Error predicting with {model_name}: {e}")
-                continue
-        
-        # Ensemble predictions
-        ensemble_scores = self._ensemble_predictions(predictions)
-        
-        # Create ranking results
-        results = []
-        for i, (doc, score) in enumerate(zip(documents, ensemble_scores)):
-            result = RankingResult(
-                doc_id=doc.get('id', str(i)),
-                score=float(score),
-                confidence=self._calculate_confidence(predictions, i),
-                feature_importance=self._get_feature_importance(features_list[i]),
-                explanation=self._generate_explanation(features_list[i], score)
-            )
-            results.append(result)
-        
-        # Sort by score
-        results.sort(key=lambda x: x.score, reverse=True)
-        
-        return results
-    
-    def _extract_features(
-        self, 
-        query: str, 
-        document: Dict[str, Any], 
-        user_context: Dict[str, Any] = None
-    ) -> RankingFeatures:
-        """Extract comprehensive features for ranking"""
-        
-        # Query features
-        query_length = len(query.split())
-        query_complexity = self._calculate_query_complexity(query)
-        query_type = self._classify_query_type(query)
-        
-        # Document features
-        title = document.get('title', '')
-        content = document.get('content', '')
-        url = document.get('url', '')
-        
-        title_relevance = self._calculate_text_relevance(query, title)
-        content_relevance = self._calculate_text_relevance(query, content)
-        url_relevance = self._calculate_text_relevance(query, url)
-        
-        domain_authority = document.get('domain_authority', 0.0)
-        page_rank = document.get('page_rank', 0.0)
-        content_freshness = self._calculate_content_freshness(document.get('timestamp', 0))
-        content_length = len(content)
-        content_quality = self._calculate_content_quality(content)
-        
-        # User interaction features (from historical data)
-        doc_id = document.get('id', '')
-        click_through_rate = self._get_historical_ctr(doc_id)
-        dwell_time = self._get_historical_dwell_time(doc_id)
-        bounce_rate = self._get_historical_bounce_rate(doc_id)
-        user_satisfaction = self._get_historical_satisfaction(doc_id)
-        
-        # Contextual features
-        user_context = user_context or {}
-        user_location = user_context.get('location', 'unknown')
-        user_device = user_context.get('device', 'unknown')
-        time_of_day = time.localtime().tm_hour
-        day_of_week = time.localtime().tm_wday
-        search_history = user_context.get('search_history', [])
-        
-        # Advanced features
-        semantic_similarity = self._calculate_semantic_similarity(query, content)
-        entity_relevance = self._calculate_entity_relevance(query, content)
-        sentiment_score = self._calculate_sentiment_score(content)
-        language_match = self._calculate_language_match(query, content)
-        
-        return RankingFeatures(
-            query_length=query_length,
-            query_complexity=query_complexity,
-            query_type=query_type,
-            doc_id=doc_id,
-            title_relevance=title_relevance,
-            content_relevance=content_relevance,
-            url_relevance=url_relevance,
-            domain_authority=domain_authority,
-            page_rank=page_rank,
-            content_freshness=content_freshness,
-            content_length=content_length,
-            content_quality=content_quality,
-            click_through_rate=click_through_rate,
-            dwell_time=dwell_time,
-            bounce_rate=bounce_rate,
-            user_satisfaction=user_satisfaction,
-            user_location=user_location,
-            user_device=user_device,
-            time_of_day=time_of_day,
-            day_of_week=day_of_week,
-            search_history=search_history,
-            semantic_similarity=semantic_similarity,
-            entity_relevance=entity_relevance,
-            sentiment_score=sentiment_score,
-            language_match=language_match
-        )
-    
-    def _features_to_matrix(self, features_list: List[RankingFeatures]) -> np.ndarray:
-        """Convert features to numpy matrix"""
-        feature_vectors = []
-        
-        for features in features_list:
-            vector = [
-                features.query_length,
-                features.query_complexity,
-                self._encode_query_type(features.query_type),
-                features.title_relevance,
-                features.content_relevance,
-                features.url_relevance,
-                features.domain_authority,
-                features.page_rank,
-                features.content_freshness,
-                features.content_length,
-                features.content_quality,
-                features.click_through_rate,
-                features.dwell_time,
-                features.bounce_rate,
-                features.user_satisfaction,
-                self._encode_location(features.user_location),
-                self._encode_device(features.user_device),
-                features.time_of_day,
-                features.day_of_week,
-                features.semantic_similarity,
-                features.entity_relevance,
-                features.sentiment_score,
-                features.language_match
-            ]
-            feature_vectors.append(vector)
-        
-        return np.array(feature_vectors)
     
     def _ensemble_predictions(self, predictions: Dict[str, np.ndarray]) -> np.ndarray:
         """Combine predictions from multiple models"""
         if not predictions:
             return np.array([])
         
-        # Weighted ensemble (can be learned from validation data)
-        weights = {
-            'xgboost': 0.4,
-            'lightgbm': 0.3,
-            'random_forest': 0.2,
-            'linear': 0.1
-        }
+        # Weighted average
+        total_weight = sum(self.model_weights.get(name, 0) for name in predictions.keys())
+        if total_weight == 0:
+            return np.array([])
         
-        ensemble_scores = np.zeros(len(next(iter(predictions.values()))))
+        ensemble_score = np.zeros_like(list(predictions.values())[0])
         
         for model_name, pred in predictions.items():
-            weight = weights.get(model_name, 0.0)
-            ensemble_scores += weight * pred
+            weight = self.model_weights.get(model_name, 0) / total_weight
+            ensemble_score += weight * pred
         
-        return ensemble_scores
+        return ensemble_score
     
-    def add_training_sample(
-        self, 
-        query: str, 
-        document: Dict[str, Any], 
-        user_context: Dict[str, Any],
-        relevance_score: float
-    ):
-        """Add a training sample for online learning"""
-        features = self._extract_features(query, document, user_context)
-        self.training_data.append((features, relevance_score))
+    def _get_feature_importance(self, doc: Document) -> Dict[str, float]:
+        """Get feature importance for a document"""
+        # This would be calculated based on the model's feature importance
+        # For now, return a simplified version
+        return {
+            'text_similarity': 0.3,
+            'page_rank': 0.2,
+            'click_through_rate': 0.2,
+            'freshness': 0.15,
+            'authority': 0.15
+        }
     
-    def _train_models(self):
-        """Train all models with current training data"""
-        if self.is_training or len(self.training_data) < 100:
-            return
+    def _generate_explanation(self, query: Query, doc: Document, score: float) -> str:
+        """Generate human-readable explanation for ranking"""
+        explanations = []
         
-        with self.model_lock:
-            self.is_training = True
+        if doc.page_rank > 0.5:
+            explanations.append("High PageRank authority")
         
-        try:
-            # Prepare training data
-            features_list, labels = zip(*self.training_data)
-            X = self._features_to_matrix(list(features_list))
-            y = np.array(labels)
-            
-            # Train each model
-            for model_name, model in self.models.items():
-                try:
-                    # Scale features
-                    X_scaled = self.feature_scalers[model_name].fit_transform(X)
-                    
-                    # Train model
-                    model.fit(X_scaled, y)
-                    
-                    # Update feature importance
-                    if hasattr(model, 'feature_importances_'):
-                        for i, importance in enumerate(model.feature_importances_):
-                            feature_name = self._get_feature_name(i)
-                            self.feature_importance[feature_name] = importance
-                    
-                    logger.info(f"Trained {model_name} model with {len(X)} samples")
-                    
-                except Exception as e:
-                    logger.error(f"Error training {model_name}: {e}")
-            
-            # Evaluate models
-            self._evaluate_models(X, y)
-            
-        finally:
-            with self.model_lock:
-                self.is_training = False
-    
-    def _evaluate_models(self, X: np.ndarray, y: np.ndarray):
-        """Evaluate model performance"""
-        # Split data for evaluation
-        split_idx = int(0.8 * len(X))
-        X_train, X_test = X[:split_idx], X[split_idx:]
-        y_train, y_test = y[:split_idx], y[split_idx:]
+        if any(term in doc.title.lower() for term in query.text.lower().split()):
+            explanations.append("Title matches query")
         
-        for model_name, model in self.models.items():
-            try:
-                X_train_scaled = self.feature_scalers[model_name].transform(X_train)
-                X_test_scaled = self.feature_scalers[model_name].transform(X_test)
-                
-                # Train on training set
-                model.fit(X_train_scaled, y_train)
-                
-                # Predict on test set
-                y_pred = model.predict(X_test_scaled)
-                
-                # Calculate metrics
-                mse = mean_squared_error(y_test, y_pred)
-                mae = mean_absolute_error(y_test, y_pred)
-                
-                self.performance_metrics[model_name].append({
-                    'mse': mse,
-                    'mae': mae,
-                    'timestamp': time.time()
-                })
-                
-                logger.info(f"{model_name} - MSE: {mse:.4f}, MAE: {mae:.4f}")
-                
-            except Exception as e:
-                logger.error(f"Error evaluating {model_name}: {e}")
-    
-    # Helper methods for feature extraction
-    def _calculate_query_complexity(self, query: str) -> float:
-        """Calculate query complexity score"""
-        words = query.split()
-        if not words:
-            return 0.0
+        if doc.click_count > 100:
+            explanations.append("Popular content")
         
-        # Simple complexity based on word count and special characters
-        complexity = len(words) * 0.1
-        complexity += len([c for c in query if c in '?!"@#$%^&*()']) * 0.2
-        return min(complexity, 1.0)
-    
-    def _classify_query_type(self, query: str) -> str:
-        """Classify query type"""
-        query_lower = query.lower()
+        if doc.freshness_score > 0.8:
+            explanations.append("Recent content")
         
-        if any(word in query_lower for word in ['how', 'what', 'why', 'when', 'where']):
-            return 'informational'
-        elif any(word in query_lower for word in ['buy', 'purchase', 'shop', 'price']):
-            return 'transactional'
-        else:
-            return 'navigational'
-    
-    def _calculate_text_relevance(self, query: str, text: str) -> float:
-        """Calculate text relevance score"""
-        if not text:
-            return 0.0
-        
-        query_words = set(query.lower().split())
-        text_words = set(text.lower().split())
-        
-        if not query_words:
-            return 0.0
-        
-        intersection = len(query_words.intersection(text_words))
-        return intersection / len(query_words)
-    
-    def _calculate_content_freshness(self, timestamp: int) -> float:
-        """Calculate content freshness score"""
-        if timestamp == 0:
-            return 0.5  # Default for unknown timestamps
-        
-        current_time = time.time()
-        age_days = (current_time - timestamp) / (24 * 3600)
-        
-        # Exponential decay: fresher content gets higher scores
-        return np.exp(-age_days / 365)  # Decay over a year
-    
-    def _calculate_content_quality(self, content: str) -> float:
-        """Calculate content quality score"""
-        if not content:
-            return 0.0
-        
-        # Simple quality metrics
-        word_count = len(content.split())
-        sentence_count = content.count('.') + content.count('!') + content.count('?')
-        
-        if sentence_count == 0:
-            return 0.0
-        
-        avg_sentence_length = word_count / sentence_count
-        
-        # Quality score based on length and structure
-        quality = min(word_count / 100, 1.0)  # Normalize by 100 words
-        quality *= min(avg_sentence_length / 20, 1.0)  # Normalize by 20 words per sentence
-        
-        return quality
-    
-    def _get_historical_ctr(self, doc_id: str) -> float:
-        """Get historical click-through rate for document"""
-        # Placeholder - would query historical data
-        return 0.1  # Default CTR
-    
-    def _get_historical_dwell_time(self, doc_id: str) -> float:
-        """Get historical dwell time for document"""
-        # Placeholder - would query historical data
-        return 30.0  # Default dwell time in seconds
-    
-    def _get_historical_bounce_rate(self, doc_id: str) -> float:
-        """Get historical bounce rate for document"""
-        # Placeholder - would query historical data
-        return 0.3  # Default bounce rate
-    
-    def _get_historical_satisfaction(self, doc_id: str) -> float:
-        """Get historical user satisfaction for document"""
-        # Placeholder - would query historical data
-        return 0.7  # Default satisfaction score
-    
-    def _calculate_semantic_similarity(self, query: str, content: str) -> float:
-        """Calculate semantic similarity between query and content"""
-        # Placeholder - would use embedding models
-        return 0.5
-    
-    def _calculate_entity_relevance(self, query: str, content: str) -> float:
-        """Calculate entity relevance score"""
-        # Placeholder - would use NER models
-        return 0.5
-    
-    def _calculate_sentiment_score(self, content: str) -> float:
-        """Calculate sentiment score of content"""
-        # Placeholder - would use sentiment analysis
-        return 0.0  # Neutral sentiment
-    
-    def _calculate_language_match(self, query: str, content: str) -> float:
-        """Calculate language match score"""
-        # Placeholder - would use language detection
-        return 1.0  # Assume same language
-    
-    def _encode_query_type(self, query_type: str) -> float:
-        """Encode query type as numeric value"""
-        encoding = {'navigational': 0.0, 'informational': 0.5, 'transactional': 1.0}
-        return encoding.get(query_type, 0.5)
-    
-    def _encode_location(self, location: str) -> float:
-        """Encode location as numeric value"""
-        # Placeholder - would use proper location encoding
-        return 0.5
-    
-    def _encode_device(self, device: str) -> float:
-        """Encode device type as numeric value"""
-        encoding = {'mobile': 0.0, 'tablet': 0.5, 'desktop': 1.0}
-        return encoding.get(device, 0.5)
-    
-    def _get_feature_name(self, index: int) -> str:
-        """Get feature name by index"""
-        feature_names = [
-            'query_length', 'query_complexity', 'query_type', 'title_relevance',
-            'content_relevance', 'url_relevance', 'domain_authority', 'page_rank',
-            'content_freshness', 'content_length', 'content_quality', 'ctr',
-            'dwell_time', 'bounce_rate', 'satisfaction', 'location', 'device',
-            'time_of_day', 'day_of_week', 'semantic_similarity', 'entity_relevance',
-            'sentiment_score', 'language_match'
-        ]
-        return feature_names[index] if index < len(feature_names) else f'feature_{index}'
+        return "; ".join(explanations) if explanations else "Standard relevance"
     
     def _calculate_confidence(self, predictions: Dict[str, np.ndarray], index: int) -> float:
-        """Calculate confidence score for prediction"""
+        """Calculate confidence in the ranking"""
         if not predictions:
             return 0.0
         
-        # Calculate variance across models as confidence measure
+        # Calculate variance across models
         scores = [pred[index] for pred in predictions.values()]
         if len(scores) < 2:
-            return 0.5
+            return 1.0
         
         mean_score = np.mean(scores)
         variance = np.var(scores)
         
-        # Lower variance = higher confidence
+        # Higher variance = lower confidence
         confidence = 1.0 / (1.0 + variance)
-        return confidence
+        return float(confidence)
     
-    def _get_feature_importance(self, features: RankingFeatures) -> Dict[str, float]:
-        """Get feature importance for a specific ranking"""
-        # Return top features based on global importance
-        top_features = sorted(
-            self.feature_importance.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )[:5]
-        
-        return dict(top_features)
+    def _generate_cache_key(self, query: Query, documents: List[Document]) -> str:
+        """Generate cache key for query-document pairs"""
+        doc_ids = sorted([doc.doc_id for doc in documents])
+        key_data = f"{query.query_id}:{':'.join(doc_ids)}"
+        return hashlib.md5(key_data.encode()).hexdigest()
     
-    def _generate_explanation(self, features: RankingFeatures, score: float) -> str:
-        """Generate human-readable explanation for ranking"""
-        explanations = []
+    def train_models(self, training_data: List[Tuple[Query, List[Document], List[float]]]):
+        """Train all models with labeled data"""
+        logging.info(f"Training models with {len(training_data)} examples")
         
-        if features.title_relevance > 0.8:
-            explanations.append("High title relevance")
-        if features.content_relevance > 0.7:
-            explanations.append("Strong content match")
-        if features.domain_authority > 0.8:
-            explanations.append("High domain authority")
-        if features.content_freshness > 0.8:
-            explanations.append("Fresh content")
+        # Prepare training data
+        X, y = [], []
         
-        if not explanations:
-            explanations.append("Standard relevance")
+        for query, docs, labels in training_data:
+            features = self.feature_extractor.extract_features(query, docs)
+            X.extend(features)
+            y.extend(labels)
         
-        return "; ".join(explanations)
+        X = np.array(X)
+        y = np.array(y)
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        # Scale features
+        X_train_scaled = self.feature_extractor.scaler.fit_transform(X_train)
+        X_test_scaled = self.feature_extractor.scaler.transform(X_test)
+        
+        # Train models
+        for model_name, model in self.models.items():
+            try:
+                logging.info(f"Training {model_name}")
+                
+                if model_name in ['ridge', 'lasso']:
+                    model.fit(X_train_scaled, y_train)
+                    y_pred = model.predict(X_test_scaled)
+                else:
+                    model.fit(X_train, y_train)
+                    y_pred = model.predict(X_test)
+                
+                # Calculate metrics
+                mse = mean_squared_error(y_test, y_pred)
+                mae = mean_absolute_error(y_test, y_pred)
+                r2 = r2_score(y_test, y_pred)
+                
+                logging.info(f"{model_name} - MSE: {mse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}")
+                
+                # Update model accuracy metric
+                self.model_accuracy.labels(model_name=model_name).set(r2)
+                
+                # Store feature importance
+                if hasattr(model, 'feature_importances_'):
+                    self.feature_importance[model_name] = model.feature_importances_
+                
+            except Exception as e:
+                logging.error(f"Failed to train {model_name}: {e}")
+        
+        # Train deep learning model
+        if self.config.enable_deep_learning:
+            self._train_deep_learning_model(X_train_scaled, y_train, X_test_scaled, y_test)
     
-    def get_model_performance(self) -> Dict[str, Any]:
-        """Get model performance metrics"""
-        performance = {}
-        
-        for model_name, metrics in self.performance_metrics.items():
-            if metrics:
-                latest = metrics[-1]
-                performance[model_name] = {
-                    'mse': latest['mse'],
-                    'mae': latest['mae'],
-                    'last_updated': latest['timestamp']
-                }
-        
-        return performance
+    def _train_deep_learning_model(self, X_train, y_train, X_test, y_test):
+        """Train deep learning model"""
+        try:
+            input_dim = X_train.shape[1]
+            model = DeepLearningRanker(input_dim)
+            
+            # Convert to PyTorch tensors
+            X_train_tensor = torch.FloatTensor(X_train)
+            y_train_tensor = torch.FloatTensor(y_train)
+            X_test_tensor = torch.FloatTensor(X_test)
+            y_test_tensor = torch.FloatTensor(y_test)
+            
+            # Training setup
+            criterion = nn.MSELoss()
+            optimizer = optim.Adam(model.parameters(), lr=0.001)
+            
+            # Training loop
+            model.train()
+            for epoch in range(100):
+                optimizer.zero_grad()
+                outputs = model(X_train_tensor)
+                loss = criterion(outputs, y_train_tensor)
+                loss.backward()
+                optimizer.step()
+                
+                if epoch % 20 == 0:
+                    logging.info(f"Deep Learning Epoch {epoch}, Loss: {loss.item():.4f}")
+            
+            # Evaluation
+            model.eval()
+            with torch.no_grad():
+                y_pred = model(X_test_tensor).numpy()
+                mse = mean_squared_error(y_test, y_pred)
+                r2 = r2_score(y_test, y_pred)
+                
+                logging.info(f"Deep Learning - MSE: {mse:.4f}, R²: {r2:.4f}")
+                self.model_accuracy.labels(model_name='deep_learning').set(r2)
+            
+            self.models['deep_learning'] = model
+            
+        except Exception as e:
+            logging.error(f"Failed to train deep learning model: {e}")
+    
+    def _update_models(self):
+        """Update models with new data"""
+        # This would implement online learning or model retraining
+        logging.info("Updating models with new data")
+    
+    def _monitor_performance(self):
+        """Monitor model performance and update weights"""
+        # This would implement performance monitoring and weight adjustment
+        logging.info("Monitoring model performance")
     
     def save_models(self, filepath: str):
         """Save trained models to disk"""
         model_data = {
             'models': self.models,
-            'scalers': self.feature_scalers,
-            'feature_importance': dict(self.feature_importance),
-            'config': self.config
+            'model_weights': self.model_weights,
+            'feature_importance': self.feature_importance,
+            'scaler': self.feature_extractor.scaler,
+            'config': asdict(self.config)
         }
         
         with open(filepath, 'wb') as f:
             pickle.dump(model_data, f)
+        
+        logging.info(f"Models saved to {filepath}")
     
     def load_models(self, filepath: str):
         """Load trained models from disk"""
@@ -645,6 +670,77 @@ class MLRanker:
             model_data = pickle.load(f)
         
         self.models = model_data['models']
-        self.feature_scalers = model_data['scalers']
-        self.feature_importance = defaultdict(float, model_data['feature_importance'])
-        self.config.update(model_data['config'])
+        self.model_weights = model_data['model_weights']
+        self.feature_importance = model_data['feature_importance']
+        self.feature_extractor.scaler = model_data['scaler']
+        
+        logging.info(f"Models loaded from {filepath}")
+    
+    def get_model_stats(self) -> Dict[str, Any]:
+        """Get statistics about the ranking system"""
+        return {
+            'models': list(self.models.keys()),
+            'model_weights': self.model_weights,
+            'cache_size': len(self.cache),
+            'feature_importance': self.feature_importance,
+            'config': asdict(self.config)
+        }
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Setup logging
+    logging.basicConfig(level=logging.INFO)
+    
+    # Create configuration
+    config = RankingConfig()
+    
+    # Create ranker
+    ranker = MLRanker(config)
+    
+    # Example query and documents
+    query = Query(
+        query_id="q1",
+        text="machine learning algorithms",
+        user_id="user1",
+        timestamp=int(time.time())
+    )
+    
+    documents = [
+        Document(
+            doc_id="doc1",
+            url="https://example.com/ml-intro",
+            title="Introduction to Machine Learning",
+            content="Machine learning is a subset of artificial intelligence...",
+            domain="example.com",
+            content_type="text/html",
+            language="en",
+            timestamp=int(time.time() - 86400),
+            content_length=5000,
+            page_rank=0.8,
+            quality_score=0.9
+        ),
+        Document(
+            doc_id="doc2",
+            url="https://example.com/algorithms",
+            title="Algorithm Design",
+            content="Algorithms are step-by-step procedures...",
+            domain="example.com",
+            content_type="text/html",
+            language="en",
+            timestamp=int(time.time() - 172800),
+            content_length=3000,
+            page_rank=0.6,
+            quality_score=0.7
+        )
+    ]
+    
+    # Test ranking
+    async def test_ranking():
+        results = await ranker.rank_documents(query, documents)
+        for result in results:
+            print(f"Doc {result.doc_id}: Score {result.score:.4f}, Confidence {result.confidence:.4f}")
+            print(f"Explanation: {result.explanation}")
+            print()
+    
+    # Run test
+    asyncio.run(test_ranking())
