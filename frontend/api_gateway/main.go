@@ -28,6 +28,16 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 	"gopkg.in/yaml.v2"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/any"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	pb "github.com/t3ss/shared_libs/proto/search"
+	pbauth "github.com/t3ss/shared_libs/proto/auth"
+	pbindexing "github.com/t3ss/shared_libs/proto/indexing"
+	pbranking "github.com/t3ss/shared_libs/proto/ranking"
+	pbml "github.com/t3ss/shared_libs/proto/ml"
 )
 
 // Configuration structure
@@ -88,6 +98,8 @@ type ServicesConfig struct {
 	SearchService    string `yaml:"search_service"`
 	IndexingService  string `yaml:"indexing_service"`
 	RankingService   string `yaml:"ranking_service"`
+	MLService        string `yaml:"ml_service"`
+	AuthService      string `yaml:"auth_service"`
 	AnalyticsService string `yaml:"analytics_service"`
 }
 
@@ -105,6 +117,13 @@ type APIGateway struct {
 	logger      *zap.Logger
 	rateLimiters map[string]*rate.Limiter
 	mu          sync.RWMutex
+	
+	// gRPC clients
+	searchClient    pb.SearchServiceClient
+	authClient      pbauth.AuthServiceClient
+	indexingClient  pbindexing.IndexingServiceClient
+	rankingClient   pbranking.RankingServiceClient
+	mlClient        pbml.MLServicesClient
 	
 	// Metrics
 	requestCounter    *prometheus.CounterVec
@@ -223,6 +242,32 @@ func NewAPIGateway(config *Config) (*APIGateway, error) {
 		}
 	}
 
+	// Initialize gRPC clients
+	searchConn, err := grpc.Dial(config.Services.SearchService, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to search service: %w", err)
+	}
+
+	authConn, err := grpc.Dial(config.Services.AuthService, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to auth service: %w", err)
+	}
+
+	indexingConn, err := grpc.Dial(config.Services.IndexingService, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to indexing service: %w", err)
+	}
+
+	rankingConn, err := grpc.Dial(config.Services.RankingService, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to ranking service: %w", err)
+	}
+
+	mlConn, err := grpc.Dial(config.Services.MLService, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to ML service: %w", err)
+	}
+
 	// Initialize Gin router
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -295,6 +340,11 @@ func NewAPIGateway(config *Config) (*APIGateway, error) {
 		redisClient: redisClient,
 		logger:      logger,
 		rateLimiters: make(map[string]*rate.Limiter),
+		searchClient:    pb.NewSearchServiceClient(searchConn),
+		authClient:      pbauth.NewAuthServiceClient(authConn),
+		indexingClient:  pbindexing.NewIndexingServiceClient(indexingConn),
+		rankingClient:   pbranking.NewRankingServiceClient(rankingConn),
+		mlClient:        pbml.NewMLServicesClient(mlConn),
 		requestCounter:    requestCounter,
 		requestDuration:   requestDuration,
 		responseSize:      responseSize,
@@ -702,9 +752,22 @@ func (g *APIGateway) search(c *gin.Context) {
 		g.cacheMisses.WithLabelValues("search").Inc()
 	}
 
-	// Forward request to search service
+	// Convert to gRPC request
+	grpcReq := &pb.SearchRequest{
+		Query:     req.Query,
+		Filters:   g.convertFiltersToProto(req.Filters),
+		Page:      int32(req.Page),
+		PageSize:  int32(req.PageSize),
+		SortBy:    req.SortBy,
+		UserId:    req.UserID,
+		SessionId: req.SessionID,
+		BoostFields: req.BoostFields,
+		Timestamp: timestamppb.New(time.Now()),
+	}
+
+	// Forward request to search service via gRPC
 	start := time.Now()
-	response, err := g.forwardSearchRequest(req)
+	grpcResp, err := g.searchClient.Search(c.Request.Context(), grpcReq)
 	queryTime := time.Since(start).Seconds() * 1000
 
 	if err != nil {
@@ -717,6 +780,8 @@ func (g *APIGateway) search(c *gin.Context) {
 		return
 	}
 
+	// Convert gRPC response to HTTP response
+	response := g.convertSearchResponseFromProto(grpcResp)
 	response.QueryTime = queryTime
 
 	// Cache the response
@@ -1170,6 +1235,71 @@ func (g *APIGateway) getRateLimitHits() int64 {
 func (g *APIGateway) getUptime() time.Duration {
 	// In production, calculate actual uptime
 	return time.Hour * 24
+}
+
+// Helper methods for gRPC conversion
+
+// convertFiltersToProto converts HTTP filters to protobuf filters
+func (g *APIGateway) convertFiltersToProto(filters map[string]interface{}) map[string]string {
+	protoFilters := make(map[string]string)
+	for k, v := range filters {
+		if str, ok := v.(string); ok {
+			protoFilters[k] = str
+		} else {
+			protoFilters[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	return protoFilters
+}
+
+// convertSearchResponseFromProto converts protobuf search response to HTTP response
+func (g *APIGateway) convertSearchResponseFromProto(grpcResp *pb.SearchResponse) *SearchResponse {
+	results := make([]SearchResult, len(grpcResp.Results))
+	for i, grpcResult := range grpcResp.Results {
+		results[i] = SearchResult{
+			ID:         grpcResult.Id,
+			Title:      grpcResult.Title,
+			URL:        grpcResult.Url,
+			Snippet:    grpcResult.Snippet,
+			Score:      grpcResult.Score,
+			Metadata:   g.convertMetadataFromProto(grpcResult.Metadata),
+			Highlights: grpcResult.Highlights,
+		}
+	}
+
+	return &SearchResponse{
+		Results:        results,
+		Total:          grpcResp.Total,
+		Page:           int(grpcResp.Page),
+		PageSize:       int(grpcResp.PageSize),
+		QueryTime:      grpcResp.QueryTimeMs,
+		Facets:         g.convertFacetsFromProto(grpcResp.Facets),
+		Suggestions:    grpcResp.Suggestions,
+		CorrectedQuery: grpcResp.CorrectedQuery,
+		ConfidenceScore: grpcResp.ConfidenceScore,
+	}
+}
+
+// convertMetadataFromProto converts protobuf metadata to HTTP metadata
+func (g *APIGateway) convertMetadataFromProto(protoMetadata map[string]*any.Any) map[string]interface{} {
+	metadata := make(map[string]interface{})
+	for k, v := range protoMetadata {
+		// For simplicity, convert to string
+		// In production, you might want to handle different types
+		metadata[k] = string(v.Value)
+	}
+	return metadata
+}
+
+// convertFacetsFromProto converts protobuf facets to HTTP facets
+func (g *APIGateway) convertFacetsFromProto(protoFacets map[string]*any.Any) map[string]interface{} {
+	facets := make(map[string]interface{})
+	for k, v := range protoFacets {
+		// For simplicity, convert to string
+		// In production, you might want to handle different types
+		facets[k] = string(v.Value)
+	}
+	return facets
 }
 
 // Start the API Gateway

@@ -1,0 +1,563 @@
+syntax = "proto3";
+
+package t3ss.ml;
+
+option go_package = "github.com/t3ss/shared_libs/proto/ml";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
+
+// ML Services definition
+service MLServices {
+  // Neural ranking
+  rpc NeuralRank(NeuralRankRequest) returns (NeuralRankResponse);
+  rpc TrainNeuralModel(TrainNeuralModelRequest) returns (TrainNeuralModelResponse);
+  
+  // Semantic search
+  rpc SemanticSearch(SemanticSearchRequest) returns (SemanticSearchResponse);
+  rpc GenerateEmbeddings(GenerateEmbeddingsRequest) returns (GenerateEmbeddingsResponse);
+  rpc TrainEmbeddingModel(TrainEmbeddingModelRequest) returns (TrainEmbeddingModelResponse);
+  
+  // Query understanding
+  rpc ClassifyQuery(ClassifyQueryRequest) returns (ClassifyQueryResponse);
+  rpc ExtractEntities(ExtractEntitiesRequest) returns (ExtractEntitiesResponse);
+  rpc ExpandQuery(ExpandQueryRequest) returns (ExpandQueryResponse);
+  
+  // Content analysis
+  rpc AnalyzeContent(ContentAnalysisRequest) returns (ContentAnalysisResponse);
+  rpc DetectLanguage(DetectLanguageRequest) returns (DetectLanguageResponse);
+  rpc ExtractKeywords(ExtractKeywordsRequest) returns (ExtractKeywordsResponse);
+  
+  // Recommendation
+  rpc GetRecommendations(RecommendationRequest) returns (RecommendationResponse);
+  rpc TrainRecommendationModel(TrainRecommendationModelRequest) returns (TrainRecommendationModelResponse);
+  
+  // Anomaly detection
+  rpc DetectAnomalies(AnomalyDetectionRequest) returns (AnomalyDetectionResponse);
+  rpc TrainAnomalyModel(TrainAnomalyModelRequest) returns (TrainAnomalyModelResponse);
+  
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Neural ranking request
+message NeuralRankRequest {
+  repeated Document documents = 1;
+  string query = 2;
+  string user_id = 3;
+  string model_name = 4;
+  map<string, string> context = 5;
+  bool enable_attention = 6;
+  bool enable_transformer = 7;
+}
+
+// Neural ranking response
+message NeuralRankResponse {
+  bool success = 1;
+  string message = 2;
+  repeated RankedDocument ranked_documents = 3;
+  double processing_time_ms = 4;
+  string model_used = 5;
+  map<string, double> attention_weights = 6;
+  double confidence_score = 7;
+}
+
+// Document for ML processing
+message Document {
+  string id = 1;
+  string title = 2;
+  string content = 3;
+  string url = 4;
+  map<string, google.protobuf.Any> features = 5;
+  map<string, string> metadata = 6;
+  repeated double embedding = 7;
+  string language = 8;
+  repeated string categories = 9;
+}
+
+// Ranked document
+message RankedDocument {
+  Document document = 1;
+  double score = 2;
+  double relevance_score = 3;
+  double semantic_score = 4;
+  double attention_score = 5;
+  map<string, double> feature_scores = 6;
+  string explanation = 7;
+  int32 rank = 8;
+}
+
+// Train neural model request
+message TrainNeuralModelRequest {
+  string model_name = 1;
+  repeated TrainingExample examples = 2;
+  NeuralModelConfig config = 3;
+  string architecture = 4; // "transformer", "cnn", "rnn", "bert", etc.
+  map<string, string> hyperparameters = 5;
+  bool use_pretrained = 6;
+  string pretrained_model = 7;
+}
+
+// Training example
+message TrainingExample {
+  repeated double features = 1;
+  double target = 2;
+  string query = 3;
+  string document_id = 4;
+  string user_id = 5;
+  map<string, string> context = 6;
+  repeated double embedding = 7;
+}
+
+// Neural model configuration
+message NeuralModelConfig {
+  int32 input_size = 1;
+  int32 hidden_size = 2;
+  int32 output_size = 3;
+  int32 num_layers = 4;
+  int32 num_heads = 5;
+  int32 num_attention_layers = 6;
+  double learning_rate = 7;
+  int32 batch_size = 8;
+  int32 epochs = 9;
+  double dropout_rate = 10;
+  string activation_function = 11;
+  string optimizer = 12;
+  bool use_batch_norm = 13;
+  bool use_residual_connections = 14;
+  int32 max_sequence_length = 15;
+  int32 embedding_dim = 16;
+  string attention_type = 17; // "self", "cross", "multi_head"
+}
+
+// Train neural model response
+message TrainNeuralModelResponse {
+  bool success = 1;
+  string message = 2;
+  string model_id = 3;
+  double training_loss = 4;
+  double validation_loss = 5;
+  double training_accuracy = 6;
+  double validation_accuracy = 7;
+  int32 training_examples = 8;
+  google.protobuf.Timestamp trained_at = 9;
+  map<string, double> metrics = 10;
+}
+
+// Semantic search request
+message SemanticSearchRequest {
+  string query = 1;
+  repeated Document documents = 2;
+  string embedding_model = 3;
+  double similarity_threshold = 4;
+  int32 max_results = 5;
+  bool use_reranking = 6;
+  string user_id = 7;
+}
+
+// Semantic search response
+message SemanticSearchResponse {
+  bool success = 1;
+  string message = 2;
+  repeated RankedDocument results = 3;
+  repeated double query_embedding = 4;
+  double processing_time_ms = 5;
+  string model_used = 6;
+  map<string, double> similarity_scores = 7;
+}
+
+// Generate embeddings request
+message GenerateEmbeddingsRequest {
+  repeated string texts = 1;
+  string model_name = 2;
+  bool normalize = 3;
+  string language = 4;
+  map<string, string> options = 5;
+}
+
+// Generate embeddings response
+message GenerateEmbeddingsResponse {
+  bool success = 1;
+  string message = 2;
+  repeated Embedding embeddings = 3;
+  string model_used = 4;
+  int32 embedding_dim = 5;
+}
+
+// Embedding representation
+message Embedding {
+  string text = 1;
+  repeated double values = 2;
+  double norm = 3;
+  string language = 4;
+  map<string, string> metadata = 5;
+}
+
+// Train embedding model request
+message TrainEmbeddingModelRequest {
+  string model_name = 1;
+  repeated TrainingText text_data = 2;
+  EmbeddingModelConfig config = 3;
+  string algorithm = 4; // "word2vec", "fasttext", "glove", "bert", "sentence_transformer"
+  map<string, string> hyperparameters = 5;
+  bool use_pretrained = 6;
+}
+
+// Training text
+message TrainingText {
+  string text = 1;
+  repeated string tokens = 2;
+  string language = 3;
+  map<string, string> metadata = 4;
+}
+
+// Embedding model configuration
+message EmbeddingModelConfig {
+  int32 embedding_dim = 1;
+  int32 window_size = 2;
+  int32 min_count = 3;
+  int32 negative_samples = 4;
+  double learning_rate = 5;
+  int32 epochs = 6;
+  int32 batch_size = 7;
+  string algorithm = 8;
+  int32 max_vocab_size = 9;
+  bool use_hierarchical_softmax = 10;
+  bool use_negative_sampling = 11;
+}
+
+// Train embedding model response
+message TrainEmbeddingModelResponse {
+  bool success = 1;
+  string message = 2;
+  string model_id = 3;
+  int32 vocabulary_size = 4;
+  int32 training_examples = 5;
+  double training_loss = 6;
+  google.protobuf.Timestamp trained_at = 7;
+  map<string, double> metrics = 8;
+}
+
+// Classify query request
+message ClassifyQueryRequest {
+  string query = 1;
+  string model_name = 2;
+  bool return_confidence = 3;
+  bool return_explanation = 4;
+  string user_id = 5;
+}
+
+// Classify query response
+message ClassifyQueryResponse {
+  bool success = 1;
+  string message = 2;
+  QueryClassification classification = 3;
+  double confidence = 4;
+  string explanation = 5;
+  string model_used = 6;
+}
+
+// Query classification
+message QueryClassification {
+  string intent = 1; // "informational", "navigational", "transactional", etc.
+  repeated string categories = 2;
+  repeated string entities = 3;
+  string language = 4;
+  double complexity_score = 5;
+  bool is_question = 6;
+  bool is_commercial = 7;
+  bool is_local = 8;
+  map<string, double> intent_scores = 9;
+}
+
+// Extract entities request
+message ExtractEntitiesRequest {
+  string text = 1;
+  string model_name = 2;
+  repeated string entity_types = 3; // "person", "organization", "location", etc.
+  double confidence_threshold = 4;
+  bool return_embeddings = 5;
+}
+
+// Extract entities response
+message ExtractEntitiesResponse {
+  bool success = 1;
+  string message = 2;
+  repeated Entity entities = 3;
+  string model_used = 4;
+}
+
+// Entity
+message Entity {
+  string text = 1;
+  string type = 2;
+  double confidence = 3;
+  int32 start_pos = 4;
+  int32 end_pos = 5;
+  string normalized_form = 6;
+  map<string, string> properties = 7;
+  repeated double embedding = 8;
+}
+
+// Expand query request
+message ExpandQueryRequest {
+  string query = 1;
+  string model_name = 2;
+  int32 max_expansions = 3;
+  double similarity_threshold = 4;
+  bool include_synonyms = 5;
+  bool include_related_terms = 6;
+  string user_id = 7;
+}
+
+// Expand query response
+message ExpandQueryResponse {
+  bool success = 1;
+  string message = 2;
+  QueryExpansion expansion = 3;
+  string model_used = 4;
+}
+
+// Query expansion
+message QueryExpansion {
+  string original_query = 1;
+  repeated string synonyms = 2;
+  repeated string related_terms = 3;
+  repeated string expanded_terms = 4;
+  map<string, double> term_weights = 5;
+  string expanded_query = 6;
+}
+
+// Content analysis request
+message ContentAnalysisRequest {
+  string content = 1;
+  string content_type = 2;
+  string url = 3;
+  repeated string analysis_types = 4; // "sentiment", "topics", "keywords", "language", etc.
+  string user_id = 5;
+}
+
+// Content analysis response
+message ContentAnalysisResponse {
+  bool success = 1;
+  string message = 2;
+  ContentAnalysis analysis = 3;
+  double processing_time_ms = 4;
+}
+
+// Content analysis result
+message ContentAnalysis {
+  string content_id = 1;
+  string language = 2;
+  double sentiment_score = 3;
+  repeated string topics = 4;
+  repeated string keywords = 5;
+  double readability_score = 6;
+  int32 word_count = 7;
+  repeated Entity entities = 8;
+  map<string, double> topic_scores = 9;
+  map<string, double> keyword_scores = 10;
+  string summary = 11;
+}
+
+// Detect language request
+message DetectLanguageRequest {
+  string text = 1;
+  bool return_confidence = 2;
+  repeated string supported_languages = 3;
+}
+
+// Detect language response
+message DetectLanguageResponse {
+  bool success = 1;
+  string message = 2;
+  string language = 3;
+  double confidence = 4;
+  map<string, double> language_scores = 5;
+}
+
+// Extract keywords request
+message ExtractKeywordsRequest {
+  string text = 1;
+  int32 max_keywords = 2;
+  double min_score = 3;
+  string algorithm = 4; // "tfidf", "textrank", "yake", "keybert"
+  bool remove_stopwords = 5;
+  string language = 6;
+}
+
+// Extract keywords response
+message ExtractKeywordsResponse {
+  bool success = 1;
+  string message = 2;
+  repeated Keyword keywords = 3;
+  string algorithm_used = 4;
+}
+
+// Keyword
+message Keyword {
+  string text = 1;
+  double score = 2;
+  int32 position = 3;
+  int32 length = 4;
+  string stem = 5;
+}
+
+// Recommendation request
+message RecommendationRequest {
+  string user_id = 1;
+  string item_type = 2;
+  int32 max_recommendations = 3;
+  map<string, string> context = 4;
+  repeated string exclude_items = 5;
+  string algorithm = 6; // "collaborative", "content_based", "hybrid", "deep_learning"
+}
+
+// Recommendation response
+message RecommendationResponse {
+  bool success = 1;
+  string message = 2;
+  repeated Recommendation recommendations = 3;
+  string algorithm_used = 4;
+  double confidence = 5;
+}
+
+// Recommendation
+message Recommendation {
+  string item_id = 1;
+  double score = 2;
+  string reason = 3;
+  map<string, string> metadata = 4;
+  string item_type = 5;
+}
+
+// Train recommendation model request
+message TrainRecommendationModelRequest {
+  string model_name = 1;
+  repeated UserInteraction interactions = 2;
+  RecommendationModelConfig config = 3;
+  string algorithm = 4;
+  map<string, string> hyperparameters = 5;
+}
+
+// User interaction
+message UserInteraction {
+  string user_id = 1;
+  string item_id = 2;
+  string interaction_type = 3; // "view", "click", "purchase", "rating"
+  double rating = 4;
+  google.protobuf.Timestamp timestamp = 5;
+  map<string, string> context = 6;
+}
+
+// Recommendation model configuration
+message RecommendationModelConfig {
+  int32 embedding_dim = 1;
+  int32 hidden_layers = 2;
+  double learning_rate = 3;
+  int32 epochs = 4;
+  int32 batch_size = 5;
+  double regularization = 6;
+  bool use_negative_sampling = 7;
+  int32 negative_samples = 8;
+}
+
+// Train recommendation model response
+message TrainRecommendationModelResponse {
+  bool success = 1;
+  string message = 2;
+  string model_id = 3;
+  double training_loss = 4;
+  double validation_loss = 5;
+  double hit_rate = 6;
+  double ndcg = 7;
+  int32 training_examples = 8;
+  google.protobuf.Timestamp trained_at = 9;
+}
+
+// Anomaly detection request
+message AnomalyDetectionRequest {
+  repeated double values = 1;
+  string model_name = 2;
+  double threshold = 3;
+  string algorithm = 4; // "isolation_forest", "one_class_svm", "autoencoder", "lstm"
+  map<string, string> context = 5;
+}
+
+// Anomaly detection response
+message AnomalyDetectionResponse {
+  bool success = 1;
+  string message = 2;
+  repeated Anomaly anomalies = 3;
+  double anomaly_score = 4;
+  bool is_anomaly = 5;
+  string model_used = 6;
+}
+
+// Anomaly
+message Anomaly {
+  int32 index = 1;
+  double score = 2;
+  string type = 3;
+  string description = 4;
+  map<string, string> context = 5;
+}
+
+// Train anomaly model request
+message TrainAnomalyModelRequest {
+  string model_name = 1;
+  repeated TrainingDataPoint data = 2;
+  AnomalyModelConfig config = 3;
+  string algorithm = 4;
+  map<string, string> hyperparameters = 5;
+}
+
+// Training data point
+message TrainingDataPoint {
+  repeated double features = 1;
+  bool is_anomaly = 2;
+  map<string, string> metadata = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// Anomaly model configuration
+message AnomalyModelConfig {
+  int32 input_dim = 1;
+  int32 hidden_dim = 2;
+  double contamination = 3;
+  int32 n_estimators = 4;
+  double learning_rate = 5;
+  int32 epochs = 6;
+  int32 batch_size = 7;
+  string activation_function = 8;
+}
+
+// Train anomaly model response
+message TrainAnomalyModelResponse {
+  bool success = 1;
+  string message = 2;
+  string model_id = 3;
+  double training_accuracy = 4;
+  double validation_accuracy = 5;
+  double precision = 6;
+  double recall = 7;
+  double f1_score = 8;
+  int32 training_examples = 9;
+  google.protobuf.Timestamp trained_at = 10;
+}
+
+// Health check
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}
