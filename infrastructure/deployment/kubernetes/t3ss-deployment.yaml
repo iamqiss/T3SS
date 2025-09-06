@@ -1,8 +1,5 @@
-# T3SS Project
-# File: infrastructure/deployment/kubernetes/t3ss-deployment.yaml
+# T3SS Kubernetes Deployment Configuration
 # (c) 2025 Qiss Labs. All Rights Reserved.
-# Unauthorized copying or distribution of this file is strictly prohibited.
-# For internal use only.
 
 apiVersion: v1
 kind: Namespace
@@ -10,754 +7,962 @@ metadata:
   name: t3ss
   labels:
     name: t3ss
-    environment: production
+    app: search-engine
 
 ---
-# High-performance crawler deployment
+# ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: t3ss-config
+  namespace: t3ss
+data:
+  production_config.yaml: |
+    # Configuration will be mounted from the config file
+    api_gateway:
+      server:
+        host: "0.0.0.0"
+        port: 8080
+      rate_limit:
+        enabled: true
+        requests_per_minute: 1000
+      caching:
+        enabled: true
+        redis_endpoint: "redis://redis-cluster:6379"
+    # ... rest of configuration
+
+---
+# Secret for sensitive data
+apiVersion: v1
+kind: Secret
+metadata:
+  name: t3ss-secrets
+  namespace: t3ss
+type: Opaque
+data:
+  db-username: <base64-encoded-username>
+  db-password: <base64-encoded-password>
+  redis-password: <base64-encoded-redis-password>
+  jwt-secret: <base64-encoded-jwt-secret>
+
+---
+# API Gateway Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: t3ss-crawler
+  name: api-gateway
   namespace: t3ss
   labels:
-    app: t3ss-crawler
-    tier: crawler
-spec:
-  replicas: 10
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 3
-      maxUnavailable: 1
-  selector:
-    matchLabels:
-      app: t3ss-crawler
-  template:
-    metadata:
-      labels:
-        app: t3ss-crawler
-        tier: crawler
-    spec:
-      containers:
-      - name: crawler
-        image: t3ss/crawler:latest
-        ports:
-        - containerPort: 8080
-        env:
-        - name: MAX_CONCURRENT_REQUESTS
-          value: "1000"
-        - name: RATE_LIMIT_PER_SECOND
-          value: "100"
-        - name: REQUEST_TIMEOUT
-          value: "30s"
-        - name: ENABLE_COMPRESSION
-          value: "true"
-        resources:
-          requests:
-            memory: "2Gi"
-            cpu: "1000m"
-            ephemeral-storage: "10Gi"
-          limits:
-            memory: "4Gi"
-            cpu: "2000m"
-            ephemeral-storage: "20Gi"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        volumeMounts:
-        - name: crawler-data
-          mountPath: /data
-      volumes:
-      - name: crawler-data
-        persistentVolumeClaim:
-          claimName: crawler-data-pvc
-      nodeSelector:
-        node-type: high-performance
-      tolerations:
-      - key: "high-performance"
-        operator: "Equal"
-        value: "true"
-        effect: "NoSchedule"
-
----
-# Ultra-fast indexer deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: t3ss-indexer
-  namespace: t3ss
-  labels:
-    app: t3ss-indexer
-    tier: indexing
-spec:
-  replicas: 5
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 2
-      maxUnavailable: 1
-  selector:
-    matchLabels:
-      app: t3ss-indexer
-  template:
-    metadata:
-      labels:
-        app: t3ss-indexer
-        tier: indexing
-    spec:
-      containers:
-      - name: indexer
-        image: t3ss/indexer:latest
-        ports:
-        - containerPort: 8081
-        env:
-        - name: BATCH_SIZE
-          value: "1000"
-        - name: ENABLE_PARALLEL_PROCESSING
-          value: "true"
-        - name: ENABLE_COMPRESSION
-          value: "true"
-        - name: MAX_DOCUMENTS
-          value: "1000000"
-        resources:
-          requests:
-            memory: "4Gi"
-            cpu: "2000m"
-            ephemeral-storage: "50Gi"
-          limits:
-            memory: "8Gi"
-            cpu: "4000m"
-            ephemeral-storage: "100Gi"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8081
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8081
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        volumeMounts:
-        - name: indexer-data
-          mountPath: /data
-        - name: shared-storage
-          mountPath: /shared
-      volumes:
-      - name: indexer-data
-        persistentVolumeClaim:
-          claimName: indexer-data-pvc
-      - name: shared-storage
-        persistentVolumeClaim:
-          claimName: shared-storage-pvc
-      nodeSelector:
-        node-type: high-performance
-
----
-# Blazing-fast query engine deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: t3ss-query-engine
-  namespace: t3ss
-  labels:
-    app: t3ss-query-engine
-    tier: querying
-spec:
-  replicas: 20
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 5
-      maxUnavailable: 2
-  selector:
-    matchLabels:
-      app: t3ss-query-engine
-  template:
-    metadata:
-      labels:
-        app: t3ss-query-engine
-        tier: querying
-    spec:
-      containers:
-      - name: query-engine
-        image: t3ss/query-engine:latest
-        ports:
-        - containerPort: 8082
-        env:
-        - name: ENABLE_PARALLEL_EXECUTION
-          value: "true"
-        - name: ENABLE_RESULT_CACHING
-          value: "true"
-        - name: CACHE_SIZE
-          value: "10000"
-        - name: MAX_RESULTS
-          value: "1000"
-        resources:
-          requests:
-            memory: "2Gi"
-            cpu: "1000m"
-            ephemeral-storage: "5Gi"
-          limits:
-            memory: "4Gi"
-            cpu: "2000m"
-            ephemeral-storage: "10Gi"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8082
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8082
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        volumeMounts:
-        - name: query-cache
-          mountPath: /cache
-        - name: shared-storage
-          mountPath: /shared
-      volumes:
-      - name: query-cache
-        emptyDir:
-          sizeLimit: 5Gi
-      - name: shared-storage
-        persistentVolumeClaim:
-          claimName: shared-storage-pvc
-      nodeSelector:
-        node-type: high-performance
-
----
-# ML ranking service deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: t3ss-ml-ranker
-  namespace: t3ss
-  labels:
-    app: t3ss-ml-ranker
-    tier: ranking
+    app: api-gateway
+    component: gateway
 spec:
   replicas: 3
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
   selector:
     matchLabels:
-      app: t3ss-ml-ranker
+      app: api-gateway
   template:
     metadata:
       labels:
-        app: t3ss-ml-ranker
-        tier: ranking
+        app: api-gateway
+        component: gateway
     spec:
       containers:
-      - name: ml-ranker
-        image: t3ss/ml-ranker:latest
+      - name: api-gateway
+        image: t3ss/api-gateway:latest
         ports:
-        - containerPort: 8083
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
         env:
-        - name: ENABLE_REAL_TIME_LEARNING
-          value: "true"
-        - name: MAX_TRAINING_SAMPLES
-          value: "100000"
-        - name: TRAINING_INTERVAL
-          value: "300"
-        - name: ENABLE_XGBOOST
-          value: "true"
-        - name: ENABLE_LIGHTGBM
-          value: "true"
+        - name: CONFIG_FILE
+          value: "/app/config/production_config.yaml"
+        - name: NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: db-username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: db-password
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: redis-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: jwt-secret
         resources:
           requests:
-            memory: "8Gi"
-            cpu: "4000m"
-            nvidia.com/gpu: 1
-            ephemeral-storage: "20Gi"
-          limits:
-            memory: "16Gi"
-            cpu: "8000m"
-            nvidia.com/gpu: 1
-            ephemeral-storage: "50Gi"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8083
-          initialDelaySeconds: 60
-          periodSeconds: 30
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8083
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        volumeMounts:
-        - name: ml-models
-          mountPath: /models
-        - name: training-data
-          mountPath: /training-data
-      volumes:
-      - name: ml-models
-        persistentVolumeClaim:
-          claimName: ml-models-pvc
-      - name: training-data
-        persistentVolumeClaim:
-          claimName: training-data-pvc
-      nodeSelector:
-        node-type: gpu-accelerated
-
----
-# Vector search service deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: t3ss-vector-search
-  namespace: t3ss
-  labels:
-    app: t3ss-vector-search
-    tier: vector-search
-spec:
-  replicas: 2
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-  selector:
-    matchLabels:
-      app: t3ss-vector-search
-  template:
-    metadata:
-      labels:
-        app: t3ss-vector-search
-        tier: vector-search
-    spec:
-      containers:
-      - name: vector-search
-        image: t3ss/vector-search:latest
-        ports:
-        - containerPort: 8084
-        env:
-        - name: EMBEDDING_MODEL
-          value: "sentence-transformers/all-MiniLM-L6-v2"
-        - name: USE_MIXED_PRECISION
-          value: "true"
-        - name: GPU_MEMORY_FRACTION
-          value: "0.8"
-        - name: USE_GPU_INDEX
-          value: "true"
-        - name: BATCH_SIZE
-          value: "32"
-        resources:
-          requests:
-            memory: "16Gi"
-            cpu: "8000m"
-            nvidia.com/gpu: 2
-            ephemeral-storage: "50Gi"
-          limits:
-            memory: "32Gi"
-            cpu: "16000m"
-            nvidia.com/gpu: 2
-            ephemeral-storage: "100Gi"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8084
-          initialDelaySeconds: 60
-          periodSeconds: 30
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8084
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        volumeMounts:
-        - name: vector-index
-          mountPath: /index
-        - name: embedding-models
-          mountPath: /models
-      volumes:
-      - name: vector-index
-        persistentVolumeClaim:
-          claimName: vector-index-pvc
-      - name: embedding-models
-        persistentVolumeClaim:
-          claimName: embedding-models-pvc
-      nodeSelector:
-        node-type: gpu-accelerated
-
----
-# Multi-layer cache service deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: t3ss-cache
-  namespace: t3ss
-  labels:
-    app: t3ss-cache
-    tier: caching
-spec:
-  replicas: 5
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 2
-      maxUnavailable: 1
-  selector:
-    matchLabels:
-      app: t3ss-cache
-  template:
-    metadata:
-      labels:
-        app: t3ss-cache
-        tier: caching
-    spec:
-      containers:
-      - name: cache
-        image: t3ss/cache:latest
-        ports:
-        - containerPort: 8085
-        env:
-        - name: L1_CACHE_SIZE
-          value: "1000"
-        - name: L2_CACHE_SIZE
-          value: "10000"
-        - name: L3_CACHE_SIZE
-          value: "100000"
-        - name: DEFAULT_TTL
-          value: "300"
-        - name: ENABLE_COMPRESSION
-          value: "true"
-        - name: ENABLE_METRICS
-          value: "true"
-        resources:
-          requests:
-            memory: "4Gi"
-            cpu: "2000m"
-            ephemeral-storage: "20Gi"
-          limits:
-            memory: "8Gi"
-            cpu: "4000m"
-            ephemeral-storage: "50Gi"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8085
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8085
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        volumeMounts:
-        - name: cache-data
-          mountPath: /data
-      volumes:
-      - name: cache-data
-        persistentVolumeClaim:
-          claimName: cache-data-pvc
-      nodeSelector:
-        node-type: high-performance
-
----
-# Frontend web UI deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: t3ss-frontend
-  namespace: t3ss
-  labels:
-    app: t3ss-frontend
-    tier: frontend
-spec:
-  replicas: 10
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 3
-      maxUnavailable: 1
-  selector:
-    matchLabels:
-      app: t3ss-frontend
-  template:
-    metadata:
-      labels:
-        app: t3ss-frontend
-        tier: frontend
-    spec:
-      containers:
-      - name: frontend
-        image: t3ss/frontend:latest
-        ports:
-        - containerPort: 80
-        env:
-        - name: API_BASE_URL
-          value: "https://api.t3ss.com"
-        - name: ENABLE_SSR
-          value: "true"
-        - name: ENABLE_PWA
-          value: "true"
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "250m"
-            ephemeral-storage: "1Gi"
-          limits:
             memory: "1Gi"
             cpu: "500m"
-            ephemeral-storage: "2Gi"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+        - name: ssl-certs
+          mountPath: /etc/ssl
         livenessProbe:
           httpGet:
             path: /health
-            port: 80
+            port: 8080
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /ready
-            port: 80
+            path: /health
+            port: 8080
           initialDelaySeconds: 5
           periodSeconds: 5
-      nodeSelector:
-        node-type: standard
+      volumes:
+      - name: config
+        configMap:
+          name: t3ss-config
+      - name: ssl-certs
+        secret:
+          secretName: t3ss-ssl-certs
 
 ---
-# Horizontal Pod Autoscaler for crawler
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: t3ss-crawler-hpa
-  namespace: t3ss
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: t3ss-crawler
-  minReplicas: 5
-  maxReplicas: 50
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 60
-      policies:
-      - type: Percent
-        value: 100
-        periodSeconds: 15
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-      - type: Percent
-        value: 10
-        periodSeconds: 60
-
----
-# Horizontal Pod Autoscaler for query engine
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: t3ss-query-engine-hpa
-  namespace: t3ss
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: t3ss-query-engine
-  minReplicas: 10
-  maxReplicas: 100
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 60
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 70
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 30
-      policies:
-      - type: Percent
-        value: 200
-        periodSeconds: 15
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-      - type: Percent
-        value: 10
-        periodSeconds: 60
-
----
-# Horizontal Pod Autoscaler for frontend
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: t3ss-frontend-hpa
-  namespace: t3ss
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: t3ss-frontend
-  minReplicas: 5
-  maxReplicas: 50
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 30
-      policies:
-      - type: Percent
-        value: 100
-        periodSeconds: 15
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-      - type: Percent
-        value: 10
-        periodSeconds: 60
-
----
-# Service definitions
+# API Gateway Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: t3ss-crawler-service
+  name: api-gateway-service
   namespace: t3ss
+  labels:
+    app: api-gateway
 spec:
   selector:
-    app: t3ss-crawler
+    app: api-gateway
   ports:
-  - port: 80
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+
+---
+# Search Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search-service
+  namespace: t3ss
+  labels:
+    app: search-service
+    component: search
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: search-service
+  template:
+    metadata:
+      labels:
+        app: search-service
+        component: search
+    spec:
+      containers:
+      - name: search-service
+        image: t3ss/search-service:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: CONFIG_FILE
+          value: "/app/config/production_config.yaml"
+        - name: NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: db-username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: db-password
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: redis-password
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+        - name: search-data
+          mountPath: /data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: t3ss-config
+      - name: search-data
+        persistentVolumeClaim:
+          claimName: search-data-pvc
+
+---
+# Search Service Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: search-service-service
+  namespace: t3ss
+  labels:
+    app: search-service
+spec:
+  selector:
+    app: search-service
+  ports:
+  - name: http
+    port: 8080
     targetPort: 8080
   type: ClusterIP
 
 ---
+# Index Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: index-service
+  namespace: t3ss
+  labels:
+    app: index-service
+    component: indexing
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: index-service
+  template:
+    metadata:
+      labels:
+        app: index-service
+        component: indexing
+    spec:
+      containers:
+      - name: index-service
+        image: t3ss/index-service:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: CONFIG_FILE
+          value: "/app/config/production_config.yaml"
+        - name: NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: db-username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: db-password
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: redis-password
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+        - name: index-data
+          mountPath: /data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: t3ss-config
+      - name: index-data
+        persistentVolumeClaim:
+          claimName: index-data-pvc
+
+---
+# Index Service Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: t3ss-indexer-service
+  name: index-service-service
   namespace: t3ss
+  labels:
+    app: index-service
 spec:
   selector:
-    app: t3ss-indexer
+    app: index-service
   ports:
-  - port: 80
-    targetPort: 8081
+  - name: http
+    port: 8080
+    targetPort: 8080
   type: ClusterIP
 
 ---
+# Crawler Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crawler
+  namespace: t3ss
+  labels:
+    app: crawler
+    component: crawling
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: crawler
+  template:
+    metadata:
+      labels:
+        app: crawler
+        component: crawling
+    spec:
+      containers:
+      - name: crawler
+        image: t3ss/crawler:latest
+        env:
+        - name: CONFIG_FILE
+          value: "/app/config/production_config.yaml"
+        - name: NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: db-username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: db-password
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: redis-password
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+        - name: crawler-data
+          mountPath: /data
+      volumes:
+      - name: config
+        configMap:
+          name: t3ss-config
+      - name: crawler-data
+        persistentVolumeClaim:
+          claimName: crawler-data-pvc
+
+---
+# Redis Cluster Deployment
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: t3ss
+  labels:
+    app: redis-cluster
+spec:
+  serviceName: redis-cluster
+  replicas: 6
+  selector:
+    matchLabels:
+      app: redis-cluster
+  template:
+    metadata:
+      labels:
+        app: redis-cluster
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+        command:
+        - redis-server
+        - --appendonly
+        - "yes"
+        - --cluster-enabled
+        - "yes"
+        - --cluster-config-file
+        - nodes.conf
+        - --cluster-node-timeout
+        - "5000"
+        - --appendfsync
+        - "everysec"
+        - --save
+        - "900 1"
+        - --save
+        - "300 10"
+        - --save
+        - "60 10000"
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: redis-password
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-data-pvc
+
+---
+# Redis Cluster Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: t3ss-query-engine-service
+  name: redis-cluster
   namespace: t3ss
+  labels:
+    app: redis-cluster
 spec:
   selector:
-    app: t3ss-query-engine
+    app: redis-cluster
   ports:
-  - port: 80
-    targetPort: 8082
+  - name: redis
+    port: 6379
+    targetPort: 6379
   type: ClusterIP
 
 ---
+# PostgreSQL Cluster Deployment
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-cluster
+  namespace: t3ss
+  labels:
+    app: postgres-cluster
+spec:
+  serviceName: postgres-cluster
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgres-cluster
+  template:
+    metadata:
+      labels:
+        app: postgres-cluster
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: "t3ss"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: db-username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: db-password
+        - name: POSTGRES_INITDB_ARGS
+          value: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: init-scripts
+          mountPath: /docker-entrypoint-initdb.d
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-data-pvc
+      - name: init-scripts
+        configMap:
+          name: postgres-init-scripts
+
+---
+# PostgreSQL Cluster Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: t3ss-ml-ranker-service
+  name: postgres-cluster
   namespace: t3ss
+  labels:
+    app: postgres-cluster
 spec:
   selector:
-    app: t3ss-ml-ranker
+    app: postgres-cluster
   ports:
-  - port: 80
-    targetPort: 8083
+  - name: postgres
+    port: 5432
+    targetPort: 5432
   type: ClusterIP
 
 ---
+# Elasticsearch Cluster Deployment
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch-cluster
+  namespace: t3ss
+  labels:
+    app: elasticsearch-cluster
+spec:
+  serviceName: elasticsearch-cluster
+  replicas: 3
+  selector:
+    matchLabels:
+      app: elasticsearch-cluster
+  template:
+    metadata:
+      labels:
+        app: elasticsearch-cluster
+    spec:
+      containers:
+      - name: elasticsearch
+        image: elasticsearch:8.8.0
+        ports:
+        - containerPort: 9200
+          name: http
+        - containerPort: 9300
+          name: transport
+        env:
+        - name: discovery.type
+          value: "single-node"
+        - name: xpack.security.enabled
+          value: "false"
+        - name: ES_JAVA_OPTS
+          value: "-Xms2g -Xmx2g"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: elasticsearch-data
+          mountPath: /usr/share/elasticsearch/data
+      volumes:
+      - name: elasticsearch-data
+        persistentVolumeClaim:
+          claimName: elasticsearch-data-pvc
+
+---
+# Elasticsearch Cluster Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: t3ss-vector-search-service
+  name: elasticsearch-cluster
   namespace: t3ss
+  labels:
+    app: elasticsearch-cluster
 spec:
   selector:
-    app: t3ss-vector-search
+    app: elasticsearch-cluster
   ports:
-  - port: 80
-    targetPort: 8084
+  - name: http
+    port: 9200
+    targetPort: 9200
+  - name: transport
+    port: 9300
+    targetPort: 9300
   type: ClusterIP
 
 ---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: t3ss
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        ports:
+        - containerPort: 9090
+          name: http
+        command:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus'
+        - '--web.console.libraries=/etc/prometheus/console_libraries'
+        - '--web.console.templates=/etc/prometheus/consoles'
+        - '--storage.tsdb.retention.time=200h'
+        - '--web.enable-lifecycle'
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus
+        - name: prometheus-data
+          mountPath: /prometheus
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      - name: prometheus-data
+        persistentVolumeClaim:
+          claimName: prometheus-data-pvc
+
+---
+# Prometheus Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: t3ss-cache-service
+  name: prometheus
   namespace: t3ss
+  labels:
+    app: prometheus
 spec:
   selector:
-    app: t3ss-cache
+    app: prometheus
   ports:
-  - port: 80
-    targetPort: 8085
+  - name: http
+    port: 9090
+    targetPort: 9090
   type: ClusterIP
 
 ---
+# Grafana Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: t3ss
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: t3ss-secrets
+              key: grafana-password
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: grafana-data
+          mountPath: /var/lib/grafana
+        - name: grafana-dashboards
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: grafana-datasources
+          mountPath: /etc/grafana/provisioning/datasources
+      volumes:
+      - name: grafana-data
+        persistentVolumeClaim:
+          claimName: grafana-data-pvc
+      - name: grafana-dashboards
+        configMap:
+          name: grafana-dashboards
+      - name: grafana-datasources
+        configMap:
+          name: grafana-datasources
+
+---
+# Grafana Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: t3ss-frontend-service
+  name: grafana
   namespace: t3ss
+  labels:
+    app: grafana
 spec:
   selector:
-    app: t3ss-frontend
+    app: grafana
   ports:
-  - port: 80
-    targetPort: 80
+  - name: http
+    port: 3000
+    targetPort: 3000
   type: ClusterIP
+
+---
+# Persistent Volume Claims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: search-data-pvc
+  namespace: t3ss
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: index-data-pvc
+  namespace: t3ss
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 500Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: crawler-data-pvc
+  namespace: t3ss
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data-pvc
+  namespace: t3ss
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data-pvc
+  namespace: t3ss
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elasticsearch-data-pvc
+  namespace: t3ss
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 200Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data-pvc
+  namespace: t3ss
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data-pvc
+  namespace: t3ss
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+---
+# Horizontal Pod Autoscaler for API Gateway
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa
+  namespace: t3ss
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# Horizontal Pod Autoscaler for Search Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: search-service-hpa
+  namespace: t3ss
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: search-service
+  minReplicas: 5
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
 
 ---
 # Ingress for external access
@@ -767,64 +972,48 @@ metadata:
   name: t3ss-ingress
   namespace: t3ss
   annotations:
-    kubernetes.io/ingress.class: nginx
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
-    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
-    nginx.ingress.kubernetes.io/rate-limit: "1000"
-    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
 spec:
   tls:
   - hosts:
-    - t3ss.com
-    - www.t3ss.com
+    - search.t3ss.com
     - api.t3ss.com
+    - grafana.t3ss.com
     secretName: t3ss-tls
   rules:
-  - host: t3ss.com
+  - host: search.t3ss.com
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: t3ss-frontend-service
+            name: api-gateway-service
             port:
-              number: 80
-  - host: www.t3ss.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: t3ss-frontend-service
-            port:
-              number: 80
+              number: 8080
   - host: api.t3ss.com
     http:
       paths:
-      - path: /search
+      - path: /
         pathType: Prefix
         backend:
           service:
-            name: t3ss-query-engine-service
+            name: api-gateway-service
             port:
-              number: 80
-      - path: /vector
+              number: 8080
+  - host: grafana.t3ss.com
+    http:
+      paths:
+      - path: /
         pathType: Prefix
         backend:
           service:
-            name: t3ss-vector-search-service
+            name: grafana
             port:
-              number: 80
-      - path: /rank
-        pathType: Prefix
-        backend:
-          service:
-            name: t3ss-ml-ranker-service
-            port:
-              number: 80
+              number: 3000
