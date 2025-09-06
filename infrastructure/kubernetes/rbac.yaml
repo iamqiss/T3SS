@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: t3ss-service-account
+  namespace: t3ss
+  labels:
+    app.kubernetes.io/name: t3ss
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: rbac
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: t3ss-cluster-role
+  labels:
+    app.kubernetes.io/name: t3ss
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: rbac
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "persistentvolumeclaims", "events", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "daemonsets", "replicasets", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors"]
+  verbs: ["get", "create"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: t3ss-cluster-role-binding
+  labels:
+    app.kubernetes.io/name: t3ss
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: t3ss-cluster-role
+subjects:
+- kind: ServiceAccount
+  name: t3ss-service-account
+  namespace: t3ss

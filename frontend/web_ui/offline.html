@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline - T3SS Search Engine</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="icon" href="/favicon.ico">
+    <style>
+        .offline-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .offline-icon {
+            font-size: 64px;
+            color: #ea4335;
+            margin-bottom: 20px;
+        }
+        
+        .offline-title {
+            font-size: 32px;
+            font-weight: 400;
+            color: #202124;
+            margin-bottom: 16px;
+        }
+        
+        .offline-message {
+            font-size: 16px;
+            color: #5f6368;
+            margin-bottom: 32px;
+            max-width: 500px;
+            line-height: 1.5;
+        }
+        
+        .offline-actions {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        
+        .offline-btn {
+            padding: 12px 24px;
+            border: 1px solid #dadce0;
+            border-radius: 24px;
+            background: #fff;
+            color: #5f6368;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .offline-btn:hover {
+            border-color: #4285f4;
+            color: #4285f4;
+        }
+        
+        .offline-btn.primary {
+            background: #4285f4;
+            border-color: #4285f4;
+            color: white;
+        }
+        
+        .offline-btn.primary:hover {
+            background: #3367d6;
+            border-color: #3367d6;
+        }
+        
+        .offline-features {
+            margin-top: 48px;
+            max-width: 600px;
+        }
+        
+        .offline-features h3 {
+            font-size: 20px;
+            font-weight: 400;
+            color: #202124;
+            margin-bottom: 16px;
+        }
+        
+        .offline-features ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .offline-features li {
+            padding: 8px 0;
+            color: #5f6368;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .offline-features i {
+            color: #34a853;
+            width: 16px;
+        }
+        
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            background: #ea4335;
+            color: white;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            z-index: 1000;
+        }
+        
+        .connection-status.online {
+            background: #34a853;
+        }
+        
+        @media (max-width: 768px) {
+            .offline-title {
+                font-size: 24px;
+            }
+            
+            .offline-actions {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .offline-btn {
+                width: 200px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status" id="connectionStatus">
+        <i class="fas fa-wifi"></i>
+        <span>Offline</span>
+    </div>
+    
+    <div class="offline-container">
+        <div class="offline-icon">
+            <i class="fas fa-wifi-slash"></i>
+        </div>
+        
+        <h1 class="offline-title">You're offline</h1>
+        
+        <p class="offline-message">
+            It looks like you're not connected to the internet. Check your connection and try again.
+        </p>
+        
+        <div class="offline-actions">
+            <button class="offline-btn primary" onclick="retryConnection()">
+                <i class="fas fa-redo"></i>
+                Try Again
+            </button>
+            <a href="/" class="offline-btn">
+                <i class="fas fa-home"></i>
+                Go Home
+            </a>
+            <button class="offline-btn" onclick="showCachedResults()">
+                <i class="fas fa-history"></i>
+                View Cached Results
+            </button>
+        </div>
+        
+        <div class="offline-features">
+            <h3>What you can do offline:</h3>
+            <ul>
+                <li>
+                    <i class="fas fa-check"></i>
+                    View previously cached search results
+                </li>
+                <li>
+                    <i class="fas fa-check"></i>
+                    Access your search history
+                </li>
+                <li>
+                    <i class="fas fa-check"></i>
+                    Browse saved bookmarks
+                </li>
+                <li>
+                    <i class="fas fa-check"></i>
+                    Use basic search suggestions
+                </li>
+            </ul>
+        </div>
+    </div>
+    
+    <script>
+        // Connection status monitoring
+        function updateConnectionStatus() {
+            const statusElement = document.getElementById('connectionStatus');
+            const isOnline = navigator.onLine;
+            
+            if (isOnline) {
+                statusElement.classList.add('online');
+                statusElement.innerHTML = '<i class="fas fa-wifi"></i><span>Online</span>';
+                
+                // Auto-redirect to main page when online
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
+            } else {
+                statusElement.classList.remove('online');
+                statusElement.innerHTML = '<i class="fas fa-wifi-slash"></i><span>Offline</span>';
+            }
+        }
+        
+        // Retry connection
+        function retryConnection() {
+            if (navigator.onLine) {
+                window.location.href = '/';
+            } else {
+                // Show error message
+                const message = document.createElement('div');
+                message.className = 'notification notification-error';
+                message.innerHTML = `
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span>Still offline. Please check your internet connection.</span>
+                `;
+                message.style.position = 'fixed';
+                message.style.top = '20px';
+                message.style.left = '50%';
+                message.style.transform = 'translateX(-50%)';
+                message.style.zIndex = '10000';
+                document.body.appendChild(message);
+                
+                setTimeout(() => {
+                    if (message.parentNode) {
+                        message.parentNode.removeChild(message);
+                    }
+                }, 3000);
+            }
+        }
+        
+        // Show cached results
+        function showCachedResults() {
+            // This would open a modal or navigate to cached results
+            // For now, just show a message
+            const message = document.createElement('div');
+            message.className = 'notification notification-info';
+            message.innerHTML = `
+                <i class="fas fa-info-circle"></i>
+                <span>Cached results feature coming soon!</span>
+            `;
+            message.style.position = 'fixed';
+            message.style.top = '20px';
+            message.style.left = '50%';
+            message.style.transform = 'translateX(-50%)';
+            message.style.zIndex = '10000';
+            document.body.appendChild(message);
+            
+            setTimeout(() => {
+                if (message.parentNode) {
+                    message.parentNode.removeChild(message);
+                }
+            }, 3000);
+        }
+        
+        // Event listeners
+        window.addEventListener('online', updateConnectionStatus);
+        window.addEventListener('offline', updateConnectionStatus);
+        
+        // Initial status check
+        updateConnectionStatus();
+        
+        // Periodic connection check
+        setInterval(async () => {
+            try {
+                const response = await fetch('/api/v1/health', { 
+                    method: 'HEAD',
+                    cache: 'no-cache'
+                });
+                if (response.ok && !navigator.onLine) {
+                    // Force online status update
+                    window.dispatchEvent(new Event('online'));
+                }
+            } catch (error) {
+                // Connection still offline
+            }
+        }, 5000);
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                retryConnection();
+            }
+        });
+    </script>
+</body>
+</html>

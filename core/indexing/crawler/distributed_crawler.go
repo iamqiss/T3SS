@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -412,7 +414,6 @@ func (dc *DistributedCrawler) shouldCrawl(job *CrawlJob) bool {
 
 // parseContent extracts links and metadata from HTML content
 func (dc *DistributedCrawler) parseContent(content []byte, baseURL string) ([]string, map[string]string, error) {
-	// This is a simplified parser - in production, you'd use a proper HTML parser
 	links := make([]string, 0)
 	metadata := make(map[string]string)
 	
@@ -426,9 +427,39 @@ func (dc *DistributedCrawler) parseContent(content []byte, baseURL string) ([]st
 		metadata["description"] = desc
 	}
 	
-	// Extract links (simplified regex-based approach)
-	linkPattern := `href=["']([^"']+)["']`
-	// In production, use proper regex compilation and HTML parsing
+	// Extract meta keywords
+	if keywords := dc.extractMetaKeywords(content); keywords != "" {
+		metadata["keywords"] = keywords
+	}
+	
+	// Extract canonical URL
+	if canonical := dc.extractCanonicalURL(content); canonical != "" {
+		metadata["canonical"] = canonical
+	}
+	
+	// Extract Open Graph metadata
+	ogData := dc.extractOpenGraphData(content)
+	for k, v := range ogData {
+		metadata["og_"+k] = v
+	}
+	
+	// Extract structured data (JSON-LD, microdata)
+	structuredData := dc.extractStructuredData(content)
+	if len(structuredData) > 0 {
+		metadata["structured_data"] = structuredData
+	}
+	
+	// Extract links with proper HTML parsing
+	links = dc.extractLinks(content, baseURL)
+	
+	// Extract content text for indexing
+	textContent := dc.extractTextContent(content)
+	metadata["content"] = textContent
+	metadata["content_length"] = fmt.Sprintf("%d", len(textContent))
+	
+	// Calculate content hash for deduplication
+	contentHash := dc.calculateContentHash(textContent)
+	metadata["content_hash"] = contentHash
 	
 	return links, metadata, nil
 }
@@ -468,9 +499,143 @@ func (dc *DistributedCrawler) extractTitle(content []byte) string {
 
 // extractMetaDescription extracts meta description from HTML content
 func (dc *DistributedCrawler) extractMetaDescription(content []byte) string {
-	// Simplified meta description extraction
-	// In production, use proper HTML parsing
+	// Look for meta description tag
+	pattern := `(?i)<meta\s+name=["']description["']\s+content=["']([^"']+)["']`
+	re := regexp.MustCompile(pattern)
+	matches := re.FindSubmatch(content)
+	if len(matches) > 1 {
+		return string(matches[1])
+	}
 	return ""
+}
+
+// extractMetaKeywords extracts meta keywords from HTML content
+func (dc *DistributedCrawler) extractMetaKeywords(content []byte) string {
+	pattern := `(?i)<meta\s+name=["']keywords["']\s+content=["']([^"']+)["']`
+	re := regexp.MustCompile(pattern)
+	matches := re.FindSubmatch(content)
+	if len(matches) > 1 {
+		return string(matches[1])
+	}
+	return ""
+}
+
+// extractCanonicalURL extracts canonical URL from HTML content
+func (dc *DistributedCrawler) extractCanonicalURL(content []byte) string {
+	pattern := `(?i)<link\s+rel=["']canonical["']\s+href=["']([^"']+)["']`
+	re := regexp.MustCompile(pattern)
+	matches := re.FindSubmatch(content)
+	if len(matches) > 1 {
+		return string(matches[1])
+	}
+	return ""
+}
+
+// extractOpenGraphData extracts Open Graph metadata
+func (dc *DistributedCrawler) extractOpenGraphData(content []byte) map[string]string {
+	ogData := make(map[string]string)
+	pattern := `(?i)<meta\s+property=["']og:([^"']+)["']\s+content=["']([^"']+)["']`
+	re := regexp.MustCompile(pattern)
+	matches := re.FindAllSubmatch(content, -1)
+	
+	for _, match := range matches {
+		if len(match) > 2 {
+			ogData[string(match[1])] = string(match[2])
+		}
+	}
+	
+	return ogData
+}
+
+// extractStructuredData extracts structured data (JSON-LD, microdata)
+func (dc *DistributedCrawler) extractStructuredData(content []byte) string {
+	// Extract JSON-LD
+	pattern := `(?i)<script\s+type=["']application/ld\+json["']>(.*?)</script>`
+	re := regexp.MustCompile(pattern)
+	matches := re.FindAllSubmatch(content, -1)
+	
+	var structuredData []string
+	for _, match := range matches {
+		if len(match) > 1 {
+			structuredData = append(structuredData, string(match[1]))
+		}
+	}
+	
+	if len(structuredData) > 0 {
+		return strings.Join(structuredData, "\n")
+	}
+	return ""
+}
+
+// extractLinks extracts all links from HTML content
+func (dc *DistributedCrawler) extractLinks(content []byte, baseURL string) []string {
+	var links []string
+	pattern := `(?i)<a\s+[^>]*href=["']([^"']+)["'][^>]*>`
+	re := regexp.MustCompile(pattern)
+	matches := re.FindAllSubmatch(content, -1)
+	
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return links
+	}
+	
+	for _, match := range matches {
+		if len(match) > 1 {
+			href := string(match[1])
+			// Resolve relative URLs
+			if resolvedURL := dc.resolveURL(base, href); resolvedURL != "" {
+				links = append(links, resolvedURL)
+			}
+		}
+	}
+	
+	return links
+}
+
+// extractTextContent extracts clean text content from HTML
+func (dc *DistributedCrawler) extractTextContent(content []byte) string {
+	// Remove script and style tags
+	scriptPattern := `(?i)<script[^>]*>.*?</script>`
+	stylePattern := `(?i)<style[^>]*>.*?</style>`
+	content = regexp.MustCompile(scriptPattern).ReplaceAll(content, []byte(""))
+	content = regexp.MustCompile(stylePattern).ReplaceAll(content, []byte(""))
+	
+	// Remove HTML tags
+	tagPattern := `(?i)<[^>]+>`
+	content = regexp.MustCompile(tagPattern).ReplaceAll(content, []byte(" "))
+	
+	// Clean up whitespace
+	whitespacePattern := `\s+`
+	content = regexp.MustCompile(whitespacePattern).ReplaceAll(content, []byte(" "))
+	
+	return strings.TrimSpace(string(content))
+}
+
+// calculateContentHash calculates hash for content deduplication
+func (dc *DistributedCrawler) calculateContentHash(content string) string {
+	hash := md5.Sum([]byte(content))
+	return fmt.Sprintf("%x", hash)
+}
+
+// resolveURL resolves relative URLs against a base URL
+func (dc *DistributedCrawler) resolveURL(base *url.URL, href string) string {
+	parsed, err := url.Parse(href)
+	if err != nil {
+		return ""
+	}
+	
+	resolved := base.ResolveReference(parsed)
+	
+	// Filter out unwanted URLs
+	if resolved.Scheme != "http" && resolved.Scheme != "https" {
+		return ""
+	}
+	
+	// Filter out fragments and query parameters for deduplication
+	resolved.Fragment = ""
+	resolved.RawQuery = ""
+	
+	return resolved.String()
 }
 
 // createJobsForLinks creates new crawl jobs for discovered links

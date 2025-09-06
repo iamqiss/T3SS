@@ -4,836 +4,589 @@
 // Unauthorized copying or distribution of this file is strictly prohibited.
 // For internal use only.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant};
-use rayon::prelude::*;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, BufReader, Write, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::thread;
+use std::sync::mpsc;
+
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock as AsyncRwLock;
-use uuid::Uuid;
+use rayon::prelude::*;
 use lz4_flex::{compress, decompress};
-use brotli::{enc::BrotliEncoderParams, CompressorReader, DecompressorWriter};
-use std::io::{Read, Write};
-use std::fs::{File, OpenOptions};
-use std::path::Path;
+use brotli::{enc::BrotliEncoderParams, CompressorWriter, Decompressor};
+use flate2::{Compression, write::GzEncoder, read::GzDecoder};
 use memmap2::{Mmap, MmapOptions};
-use dashmap::DashMap;
-use crossbeam_channel::{bounded, Receiver, Sender};
-use tokio::task::JoinHandle;
+use uuid::Uuid;
 
-/// Represents a document to be indexed
+/// Document representation for indexing
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexDocument {
+pub struct Document {
     pub id: String,
     pub url: String,
     pub title: String,
     pub content: String,
+    pub metadata: HashMap<String, String>,
     pub timestamp: u64,
+    pub content_hash: String,
     pub domain: String,
     pub content_type: String,
-    pub size: u64,
     pub language: String,
-    pub metadata: HashMap<String, String>,
     pub quality_score: f64,
-    pub freshness_score: f64,
 }
 
-/// Represents a posting in the inverted index
+/// Posting list entry in the inverted index
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Posting {
     pub doc_id: String,
     pub term_frequency: u32,
     pub positions: Vec<u32>,
     pub field_weights: HashMap<String, f32>,
-    pub proximity_scores: Vec<f32>,
-    pub semantic_score: f32,
+    pub boost: f32,
 }
 
-/// Represents a compressed posting list
-#[derive(Debug, Clone)]
+/// Compressed posting list
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressedPostingList {
     pub term: String,
     pub doc_count: u32,
+    pub total_frequency: u32,
     pub compressed_data: Vec<u8>,
     pub compression_type: CompressionType,
-    pub uncompressed_size: usize,
-    pub compressed_size: usize,
+    pub last_updated: u64,
 }
 
-/// Compression types for posting lists
+/// Compression algorithms supported
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CompressionType {
-    None,
     LZ4,
     Brotli,
+    Gzip,
     Delta,
     VariableByte,
-    PForDelta,
+    Uncompressed,
 }
 
-/// Configuration for the advanced indexing engine
+/// Index statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexStats {
+    pub total_documents: u64,
+    pub total_terms: u64,
+    pub total_postings: u64,
+    pub index_size_bytes: u64,
+    pub compression_ratio: f64,
+    pub average_doc_length: f64,
+    pub last_updated: u64,
+    pub shard_count: u32,
+}
+
+/// Configuration for the indexing engine
 #[derive(Debug, Clone)]
-pub struct IndexingEngineConfig {
-    pub max_documents: usize,
+pub struct IndexingConfig {
+    pub max_memory_usage: usize,
     pub batch_size: usize,
-    pub enable_compression: bool,
     pub compression_type: CompressionType,
-    pub compression_level: u8,
-    pub enable_sharding: bool,
-    pub shard_count: usize,
-    pub enable_parallel_processing: bool,
-    pub max_term_length: usize,
-    pub min_term_frequency: u32,
-    pub field_weights: HashMap<String, f32>,
-    pub enable_semantic_indexing: bool,
     pub enable_position_indexing: bool,
-    pub enable_proximity_scoring: bool,
-    pub index_file_path: String,
-    pub enable_memory_mapping: bool,
-    pub memory_limit: usize,
-    pub enable_incremental_indexing: bool,
+    pub enable_field_boosting: bool,
+    pub shard_count: u32,
     pub merge_threshold: usize,
+    pub enable_incremental_indexing: bool,
+    pub index_directory: PathBuf,
+    pub enable_compression: bool,
+    pub compression_level: u32,
 }
 
-impl Default for IndexingEngineConfig {
+impl Default for IndexingConfig {
     fn default() -> Self {
-        let mut field_weights = HashMap::new();
-        field_weights.insert("title".to_string(), 3.0);
-        field_weights.insert("content".to_string(), 1.0);
-        field_weights.insert("url".to_string(), 2.0);
-        field_weights.insert("metadata".to_string(), 1.5);
-        
         Self {
-            max_documents: 10_000_000,
+            max_memory_usage: 1024 * 1024 * 1024, // 1GB
             batch_size: 1000,
-            enable_compression: true,
             compression_type: CompressionType::LZ4,
-            compression_level: 6,
-            enable_sharding: true,
-            shard_count: 16,
-            enable_parallel_processing: true,
-            max_term_length: 50,
-            min_term_frequency: 1,
-            field_weights,
-            enable_semantic_indexing: true,
             enable_position_indexing: true,
-            enable_proximity_scoring: true,
-            index_file_path: "index".to_string(),
-            enable_memory_mapping: true,
-            memory_limit: 1024 * 1024 * 1024, // 1GB
-            enable_incremental_indexing: true,
+            enable_field_boosting: true,
+            shard_count: 8,
             merge_threshold: 10000,
+            enable_incremental_indexing: true,
+            index_directory: PathBuf::from("./index"),
+            enable_compression: true,
+            compression_level: 6,
         }
     }
 }
 
-/// Advanced indexing engine with compression and sharding
+/// Advanced indexing engine with multiple compression algorithms
 pub struct AdvancedIndexingEngine {
-    config: IndexingEngineConfig,
-    shards: Arc<Vec<Arc<AsyncRwLock<IndexShard>>>>,
-    document_store: Arc<AsyncRwLock<DocumentStore>>,
-    term_index: Arc<DashMap<String, TermInfo>>,
-    compression_manager: Arc<Mutex<CompressionManager>>,
-    shard_manager: Arc<Mutex<ShardManager>>,
-    merge_scheduler: Arc<Mutex<MergeScheduler>>,
-    stats: Arc<Mutex<IndexingStats>>,
-    document_queue: (Sender<IndexDocument>, Receiver<IndexDocument>),
-    processing_tasks: Vec<JoinHandle<()>>,
+    config: IndexingConfig,
+    inverted_index: Arc<AsyncRwLock<HashMap<String, Vec<Posting>>>>,
+    document_store: Arc<AsyncRwLock<HashMap<String, Document>>>,
+    term_dictionary: Arc<RwLock<HashMap<String, u64>>>,
+    stats: Arc<Mutex<IndexStats>>,
+    shards: Vec<Arc<AsyncRwLock<HashMap<String, Vec<Posting>>>>>,
+    index_writer: Arc<Mutex<IndexWriter>>,
+    compression_engine: Arc<CompressionEngine>,
 }
 
-/// Represents an index shard
-#[derive(Debug)]
-pub struct IndexShard {
-    pub id: usize,
-    pub term_postings: HashMap<String, Vec<Posting>>,
-    pub compressed_postings: HashMap<String, CompressedPostingList>,
-    pub doc_count: u64,
-    pub term_count: u64,
-    pub size_bytes: u64,
-    pub last_updated: u64,
+/// Index writer for batch operations
+struct IndexWriter {
+    pending_documents: Vec<Document>,
+    pending_postings: HashMap<String, Vec<Posting>>,
+    batch_size: usize,
+    last_flush: Instant,
 }
 
-/// Document store for metadata
-#[derive(Debug)]
-pub struct DocumentStore {
-    pub documents: HashMap<String, IndexDocument>,
-    pub doc_id_to_url: HashMap<String, String>,
-    pub url_to_doc_id: HashMap<String, String>,
-    pub domain_stats: HashMap<String, DomainStats>,
-    pub total_documents: u64,
-    pub total_size: u64,
-}
-
-/// Domain statistics
-#[derive(Debug, Clone)]
-pub struct DomainStats {
-    pub domain: String,
-    pub document_count: u64,
-    pub total_size: u64,
-    pub average_quality: f64,
-    pub last_crawled: u64,
-}
-
-/// Term information
-#[derive(Debug, Clone)]
-pub struct TermInfo {
-    pub term: String,
-    pub document_frequency: u32,
-    pub total_frequency: u64,
-    pub shard_id: usize,
-    pub compressed: bool,
-    pub last_updated: u64,
-}
-
-/// Compression manager
-struct CompressionManager {
-    compression_stats: HashMap<CompressionType, CompressionStats>,
-    active_compressions: HashMap<String, CompressionTask>,
-}
-
-/// Compression statistics
-#[derive(Debug, Default)]
-struct CompressionStats {
-    pub total_compressions: u64,
-    pub total_decompressions: u64,
-    pub total_bytes_compressed: u64,
-    pub total_bytes_decompressed: u64,
-    pub average_compression_ratio: f64,
-    pub compression_time: Duration,
-    pub decompression_time: Duration,
-}
-
-/// Compression task
-#[derive(Debug)]
-struct CompressionTask {
-    pub id: String,
-    pub term: String,
-    pub postings: Vec<Posting>,
-    pub compression_type: CompressionType,
-    pub status: CompressionStatus,
-}
-
-/// Compression status
-#[derive(Debug)]
-enum CompressionStatus {
-    Pending,
-    InProgress,
-    Completed,
-    Failed,
-}
-
-/// Shard manager
-struct ShardManager {
-    shard_assignments: HashMap<String, usize>,
-    shard_loads: HashMap<usize, f64>,
-    rebalance_threshold: f64,
-}
-
-/// Merge scheduler
-struct MergeScheduler {
-    merge_queue: Vec<MergeTask>,
-    active_merges: HashMap<String, MergeTask>,
-    merge_stats: MergeStats,
-}
-
-/// Merge task
-#[derive(Debug)]
-struct MergeTask {
-    pub id: String,
-    pub source_shards: Vec<usize>,
-    pub target_shard: usize,
-    pub priority: u32,
-    pub status: MergeStatus,
-}
-
-/// Merge status
-#[derive(Debug)]
-enum MergeStatus {
-    Pending,
-    InProgress,
-    Completed,
-    Failed,
-}
-
-/// Merge statistics
-#[derive(Debug, Default)]
-struct MergeStats {
-    pub total_merges: u64,
-    pub successful_merges: u64,
-    pub failed_merges: u64,
-    pub average_merge_time: Duration,
-    pub total_documents_merged: u64,
-}
-
-/// Indexing statistics
-#[derive(Debug, Default)]
-pub struct IndexingStats {
-    pub total_documents_indexed: u64,
-    pub total_terms_indexed: u64,
-    pub total_postings_created: u64,
-    pub indexing_time: Duration,
-    pub compression_time: Duration,
-    pub merge_time: Duration,
-    pub memory_usage: u64,
-    pub disk_usage: u64,
-    pub shard_count: usize,
-    pub average_document_size: f64,
-    pub indexing_rate: f64, // documents per second
+/// Compression engine for different algorithms
+struct CompressionEngine {
+    lz4_level: u32,
+    brotli_level: u32,
+    gzip_level: u32,
 }
 
 impl AdvancedIndexingEngine {
     /// Create a new advanced indexing engine
-    pub fn new(config: IndexingEngineConfig) -> Self {
-        // Create shards
+    pub fn new(config: IndexingConfig) -> Result<Self, String> {
+        // Create index directory if it doesn't exist
+        std::fs::create_dir_all(&config.index_directory)
+            .map_err(|e| format!("Failed to create index directory: {}", e))?;
+
+        // Initialize shards
         let mut shards = Vec::new();
-        for i in 0..config.shard_count {
-            let shard = IndexShard {
-                id: i,
-                term_postings: HashMap::new(),
-                compressed_postings: HashMap::new(),
-                doc_count: 0,
-                term_count: 0,
-                size_bytes: 0,
-                last_updated: 0,
-            };
-            shards.push(Arc::new(AsyncRwLock::new(shard)));
+        for _ in 0..config.shard_count {
+            shards.push(Arc::new(AsyncRwLock::new(HashMap::new())));
         }
 
-        // Create document store
-        let document_store = DocumentStore {
-            documents: HashMap::new(),
-            doc_id_to_url: HashMap::new(),
-            url_to_doc_id: HashMap::new(),
-            domain_stats: HashMap::new(),
-            total_documents: 0,
-            total_size: 0,
-        };
+        let compression_engine = Arc::new(CompressionEngine {
+            lz4_level: config.compression_level,
+            brotli_level: config.compression_level,
+            gzip_level: config.compression_level,
+        });
 
-        // Create document queue
-        let (tx, rx) = bounded(config.batch_size * 2);
+        let index_writer = Arc::new(Mutex::new(IndexWriter {
+            pending_documents: Vec::new(),
+            pending_postings: HashMap::new(),
+            batch_size: config.batch_size,
+            last_flush: Instant::now(),
+        }));
 
-        Self {
+        Ok(Self {
             config,
-            shards: Arc::new(shards),
-            document_store: Arc::new(AsyncRwLock::new(document_store)),
-            term_index: Arc::new(DashMap::new()),
-            compression_manager: Arc::new(Mutex::new(CompressionManager::new())),
-            shard_manager: Arc::new(Mutex::new(ShardManager::new(config.shard_count))),
-            merge_scheduler: Arc::new(Mutex::new(MergeScheduler::new())),
-            stats: Arc::new(Mutex::new(IndexingStats::default())),
-            document_queue: (tx, rx),
-            processing_tasks: Vec::new(),
-        }
+            inverted_index: Arc::new(AsyncRwLock::new(HashMap::new())),
+            document_store: Arc::new(AsyncRwLock::new(HashMap::new())),
+            term_dictionary: Arc::new(RwLock::new(HashMap::new())),
+            stats: Arc::new(Mutex::new(IndexStats {
+                total_documents: 0,
+                total_terms: 0,
+                total_postings: 0,
+                index_size_bytes: 0,
+                compression_ratio: 0.0,
+                average_doc_length: 0.0,
+                last_updated: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                shard_count: 0,
+            })),
+            shards,
+            index_writer,
+            compression_engine,
+        })
     }
 
-    /// Start the indexing engine
-    pub async fn start(&mut self) -> Result<(), String> {
-        // Start document processing workers
-        for i in 0..self.config.batch_size {
-            let shards = Arc::clone(&self.shards);
-            let document_store = Arc::clone(&self.document_store);
-            let term_index = Arc::clone(&self.term_index);
-            let compression_manager = Arc::clone(&self.compression_manager);
-            let stats = Arc::clone(&self.stats);
-            let config = self.config.clone();
-            let rx = self.document_queue.1.clone();
-
-            let task = tokio::spawn(async move {
-                Self::document_processing_worker(
-                    i,
-                    shards,
-                    document_store,
-                    term_index,
-                    compression_manager,
-                    stats,
-                    config,
-                    rx,
-                ).await;
-            });
-
-            self.processing_tasks.push(task);
+    /// Index a single document
+    pub async fn index_document(&self, document: Document) -> Result<(), String> {
+        let mut writer = self.index_writer.lock().unwrap();
+        
+        // Add to pending documents
+        writer.pending_documents.push(document.clone());
+        
+        // Process document if batch is full
+        if writer.pending_documents.len() >= writer.batch_size {
+            self.flush_pending_documents().await?;
         }
-
-        // Start compression worker
-        let compression_manager = Arc::clone(&self.compression_manager);
-        let shards = Arc::clone(&self.shards);
-        let compression_task = tokio::spawn(async move {
-            Self::compression_worker(compression_manager, shards).await;
-        });
-        self.processing_tasks.push(compression_task);
-
-        // Start merge scheduler
-        let merge_scheduler = Arc::clone(&self.merge_scheduler);
-        let shards = Arc::clone(&self.shards);
-        let merge_task = tokio::spawn(async move {
-            Self::merge_worker(merge_scheduler, shards).await;
-        });
-        self.processing_tasks.push(merge_task);
-
+        
         Ok(())
     }
 
-    /// Add a document to the index
-    pub async fn add_document(&self, document: IndexDocument) -> Result<(), String> {
-        // Send document to processing queue
-        self.document_queue.0.send(document).map_err(|e| e.to_string())?;
-        Ok(())
-    }
+    /// Index multiple documents in batch
+    pub async fn index_documents(&self, documents: Vec<Document>) -> Result<(), String> {
+        let documents_chunks: Vec<Vec<Document>> = documents
+            .chunks(self.config.batch_size)
+            .map(|chunk| chunk.to_vec())
+            .collect();
 
-    /// Add multiple documents in batch
-    pub async fn add_documents_batch(&self, documents: Vec<IndexDocument>) -> Result<(), String> {
-        for document in documents {
-            self.add_document(document).await?;
-        }
-        Ok(())
-    }
-
-    /// Search for documents containing a term
-    pub async fn search_term(&self, term: &str) -> Result<Vec<Posting>, String> {
-        let term_info = self.term_index.get(term)
-            .ok_or_else(|| "Term not found".to_string())?;
-        
-        let shard = self.shards[term_info.shard_id].read().await;
-        
-        if term_info.compressed {
-            // Decompress posting list
-            if let Some(compressed_list) = shard.compressed_postings.get(term) {
-                self.decompress_postings(compressed_list).await
-            } else {
-                Ok(Vec::new())
-            }
-        } else {
-            // Return uncompressed postings
-            Ok(shard.term_postings.get(term).cloned().unwrap_or_default())
-        }
-    }
-
-    /// Search for documents containing multiple terms
-    pub async fn search_terms(&self, terms: &[String]) -> Result<Vec<SearchResult>, String> {
-        let mut results = Vec::new();
-        
-        for term in terms {
-            let postings = self.search_term(term).await?;
-            for posting in postings {
-                results.push(SearchResult {
-                    doc_id: posting.doc_id,
-                    score: posting.term_frequency as f64,
-                    term: term.clone(),
-                });
-            }
-        }
-        
-        // Group by document ID and calculate combined scores
-        let mut doc_scores: HashMap<String, f64> = HashMap::new();
-        for result in results {
-            let score = doc_scores.get(&result.doc_id).unwrap_or(&0.0) + result.score;
-            doc_scores.insert(result.doc_id, score);
-        }
-        
-        // Convert to final results
-        let final_results: Vec<SearchResult> = doc_scores.into_iter()
-            .map(|(doc_id, score)| SearchResult {
-                doc_id,
-                score,
-                term: "combined".to_string(),
+        // Process documents in parallel chunks
+        let results: Result<Vec<()>, String> = documents_chunks
+            .par_iter()
+            .map(|chunk| {
+                // This would need to be async, but for now we'll process sequentially
+                // In a real implementation, you'd use tokio::task::spawn_blocking
+                Ok(())
             })
             .collect();
-        
-        Ok(final_results)
-    }
 
-    /// Get document by ID
-    pub async fn get_document(&self, doc_id: &str) -> Result<Option<IndexDocument>, String> {
-        let document_store = self.document_store.read().await;
-        Ok(document_store.documents.get(doc_id).cloned())
-    }
+        results?;
 
-    /// Get index statistics
-    pub async fn get_index_stats(&self) -> Result<IndexingStats, String> {
-        let stats = self.stats.lock().unwrap();
-        Ok(stats.clone())
-    }
+        // Process each chunk
+        for chunk in documents_chunks {
+            self.process_document_batch(chunk).await?;
+        }
 
-    /// Optimize the index (merge shards, compress data)
-    pub async fn optimize_index(&self) -> Result<(), String> {
-        // Trigger compression of all posting lists
-        self.compress_all_postings().await?;
-        
-        // Schedule merge operations for overloaded shards
-        self.schedule_merge_operations().await?;
-        
         Ok(())
     }
 
-    /// Document processing worker
-    async fn document_processing_worker(
-        worker_id: usize,
-        shards: Arc<Vec<Arc<AsyncRwLock<IndexShard>>>>,
-        document_store: Arc<AsyncRwLock<DocumentStore>>,
-        term_index: Arc<DashMap<String, TermInfo>>,
-        compression_manager: Arc<Mutex<CompressionManager>>,
-        stats: Arc<Mutex<IndexingStats>>,
-        config: IndexingEngineConfig,
-        mut rx: Receiver<IndexDocument>,
-    ) {
-        while let Ok(document) = rx.recv() {
-            let start_time = Instant::now();
+    /// Process a batch of documents
+    async fn process_document_batch(&self, documents: Vec<Document>) -> Result<(), String> {
+        let mut term_postings: HashMap<String, Vec<Posting>> = HashMap::new();
+        let mut doc_store = self.document_store.write().await;
+        let mut term_dict = self.term_dictionary.write().unwrap();
+
+        for document in documents {
+            // Store document
+            doc_store.insert(document.id.clone(), document.clone());
+
+            // Process document terms
+            let postings = self.extract_term_postings(&document).await?;
             
-            // Process document
-            if let Err(e) = Self::process_document(
-                &document,
-                &shards,
-                &document_store,
-                &term_index,
-                &config,
-            ).await {
-                eprintln!("Worker {} failed to process document: {}", worker_id, e);
-                continue;
-            }
-            
-            // Update statistics
-            {
-                let mut stats = stats.lock().unwrap();
-                stats.total_documents_indexed += 1;
-                stats.indexing_time += start_time.elapsed();
+            for (term, posting) in postings {
+                term_postings.entry(term).or_insert_with(Vec::new).push(posting);
             }
         }
+
+        // Update inverted index
+        let mut index = self.inverted_index.write().await;
+        for (term, postings) in term_postings {
+            index.entry(term.clone()).or_insert_with(Vec::new).extend(postings);
+            
+            // Update term dictionary
+            let count = index.get(&term).map(|p| p.len()).unwrap_or(0) as u64;
+            term_dict.insert(term, count);
+        }
+
+        // Update statistics
+        self.update_stats(documents.len()).await;
+
+        Ok(())
     }
 
-    /// Process a single document
-    async fn process_document(
-        document: &IndexDocument,
-        shards: &Arc<Vec<Arc<AsyncRwLock<IndexShard>>>>,
-        document_store: &Arc<AsyncRwLock<DocumentStore>>,
-        term_index: &Arc<DashMap<String, TermInfo>>,
-        config: &IndexingEngineConfig,
-    ) -> Result<(), String> {
-        // Add document to document store
-        {
-            let mut store = document_store.write().await;
-            store.documents.insert(document.id.clone(), document.clone());
-            store.doc_id_to_url.insert(document.id.clone(), document.url.clone());
-            store.url_to_doc_id.insert(document.url.clone(), document.id.clone());
-            store.total_documents += 1;
-            store.total_size += document.size;
-            
-            // Update domain statistics
-            let domain_stats = store.domain_stats.entry(document.domain.clone()).or_insert_with(|| DomainStats {
-                domain: document.domain.clone(),
-                document_count: 0,
-                total_size: 0,
-                average_quality: 0.0,
-                last_crawled: document.timestamp,
-            });
-            
-            domain_stats.document_count += 1;
-            domain_stats.total_size += document.size;
-            domain_stats.average_quality = (domain_stats.average_quality + document.quality_score) / 2.0;
-            domain_stats.last_crawled = document.timestamp;
-        }
-
-        // Tokenize document
-        let terms = Self::tokenize_document(document, config)?;
+    /// Extract term postings from a document
+    async fn extract_term_postings(&self, document: &Document) -> Result<HashMap<String, Posting>, String> {
+        let mut term_postings = HashMap::new();
         
-        // Assign terms to shards
-        for (term, positions) in terms {
-            let shard_id = Self::get_shard_for_term(&term, config.shard_count);
-            let shard = &shards[shard_id];
+        // Tokenize content
+        let terms = self.tokenize_text(&document.content);
+        let title_terms = self.tokenize_text(&document.title);
+        
+        // Process content terms
+        let mut term_positions: HashMap<String, Vec<u32>> = HashMap::new();
+        for (pos, term) in terms.iter().enumerate() {
+            term_positions.entry(term.clone()).or_insert_with(Vec::new).push(pos as u32);
+        }
+        
+        // Process title terms with higher weight
+        for (pos, term) in title_terms.iter().enumerate() {
+            let adjusted_pos = pos as u32 + 10000; // Offset title positions
+            term_positions.entry(term.clone()).or_insert_with(Vec::new).push(adjusted_pos);
+        }
+        
+        // Create postings
+        for (term, positions) in term_positions {
+            let mut field_weights = HashMap::new();
+            field_weights.insert("content".to_string(), 1.0);
+            field_weights.insert("title".to_string(), 2.0);
             
-            // Create posting
             let posting = Posting {
                 doc_id: document.id.clone(),
                 term_frequency: positions.len() as u32,
-                positions,
-                field_weights: Self::calculate_field_weights(&term, document, config),
-                proximity_scores: Vec::new(),
-                semantic_score: 0.0,
+                positions: if self.config.enable_position_indexing { positions } else { Vec::new() },
+                field_weights,
+                boost: document.quality_score as f32,
             };
             
-            // Add posting to shard
-            {
-                let mut shard_guard = shard.write().await;
-                shard_guard.term_postings.entry(term.clone()).or_insert_with(Vec::new).push(posting);
-                shard_guard.doc_count += 1;
-                shard_guard.term_count += 1;
-                shard_guard.last_updated = document.timestamp;
-            }
-            
-            // Update term index
-            {
-                let mut term_info = term_index.get(&term).map(|entry| entry.clone()).unwrap_or_else(|| TermInfo {
-                    term: term.clone(),
-                    document_frequency: 0,
-                    total_frequency: 0,
-                    shard_id,
-                    compressed: false,
-                    last_updated: document.timestamp,
-                });
-                
-                term_info.document_frequency += 1;
-                term_info.total_frequency += 1;
-                term_info.last_updated = document.timestamp;
-                
-                term_index.insert(term.clone(), term_info);
-            }
+            term_postings.insert(term, posting);
         }
         
-        Ok(())
-    }
-
-    /// Tokenize a document into terms with positions
-    fn tokenize_document(document: &IndexDocument, config: &IndexingEngineConfig) -> Result<HashMap<String, Vec<u32>>, String> {
-        let mut terms = HashMap::new();
-        let mut position = 0u32;
-
-        // Tokenize title
-        for term in Self::tokenize_text(&document.title, config) {
-            terms.entry(term).or_insert_with(Vec::new).push(position);
-            position += 1;
-        }
-
-        // Tokenize content
-        for term in Self::tokenize_text(&document.content, config) {
-            terms.entry(term).or_insert_with(Vec::new).push(position);
-            position += 1;
-        }
-
-        // Tokenize URL
-        for term in Self::tokenize_text(&document.url, config) {
-            terms.entry(term).or_insert_with(Vec::new).push(position);
-            position += 1;
-        }
-
-        Ok(terms)
+        Ok(term_postings)
     }
 
     /// Tokenize text into terms
-    fn tokenize_text(text: &str, config: &IndexingEngineConfig) -> Vec<String> {
-        text
-            .to_lowercase()
+    fn tokenize_text(&self, text: &str) -> Vec<String> {
+        text.to_lowercase()
             .chars()
             .filter(|c| c.is_alphanumeric() || c.is_whitespace())
             .collect::<String>()
             .split_whitespace()
-            .filter(|term| term.len() >= 2 && term.len() <= config.max_term_length)
-            .map(|term| term.to_string())
+            .map(|s| s.to_string())
+            .filter(|s| s.len() > 2) // Filter out very short terms
             .collect()
     }
 
-    /// Calculate field weights for a term
-    fn calculate_field_weights(term: &str, document: &IndexDocument, config: &IndexingEngineConfig) -> HashMap<String, f32> {
-        let mut weights = HashMap::new();
+    /// Flush pending documents to index
+    async fn flush_pending_documents(&self) -> Result<(), String> {
+        let mut writer = self.index_writer.lock().unwrap();
         
-        // Check if term appears in title
-        if document.title.to_lowercase().contains(&term.to_lowercase()) {
-            weights.insert("title".to_string(), 
-                config.field_weights.get("title").unwrap_or(&1.0) * 2.0);
+        if writer.pending_documents.is_empty() {
+            return Ok(());
         }
         
-        // Check if term appears in content
-        if document.content.to_lowercase().contains(&term.to_lowercase()) {
-            weights.insert("content".to_string(), 
-                config.field_weights.get("content").unwrap_or(&1.0));
-        }
+        let documents = writer.pending_documents.drain(..).collect();
+        writer.last_flush = Instant::now();
         
-        // Check if term appears in URL
-        if document.url.to_lowercase().contains(&term.to_lowercase()) {
-            weights.insert("url".to_string(), 
-                config.field_weights.get("url").unwrap_or(&1.0) * 1.5);
-        }
+        drop(writer); // Release lock
         
-        weights
+        self.process_document_batch(documents).await?;
+        
+        Ok(())
     }
 
-    /// Get shard ID for a term
-    fn get_shard_for_term(term: &str, shard_count: usize) -> usize {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+    /// Search for documents containing terms
+    pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
+        let terms = self.tokenize_text(query);
+        let mut doc_scores: HashMap<String, f64> = HashMap::new();
         
-        let mut hasher = DefaultHasher::new();
-        term.hash(&mut hasher);
-        (hasher.finish() as usize) % shard_count
+        let index = self.inverted_index.read().await;
+        
+        for term in terms {
+            if let Some(postings) = index.get(&term) {
+                for posting in postings {
+                    let score = self.calculate_tf_idf_score(posting, postings.len() as u64);
+                    *doc_scores.entry(posting.doc_id.clone()).or_insert(0.0) += score;
+                }
+            }
+        }
+        
+        // Sort by score and return top results
+        let mut results: Vec<(String, f64)> = doc_scores.into_iter().collect();
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        
+        let doc_store = self.document_store.read().await;
+        let search_results: Vec<SearchResult> = results
+            .into_iter()
+            .take(limit)
+            .filter_map(|(doc_id, score)| {
+                doc_store.get(&doc_id).map(|doc| SearchResult {
+                    document: doc.clone(),
+                    score,
+                })
+            })
+            .collect();
+        
+        Ok(search_results)
     }
 
-    /// Compress posting list
-    async fn compress_postings(&self, term: &str, postings: &[Posting]) -> Result<CompressedPostingList, String> {
-        let serialized = bincode::serialize(postings).map_err(|e| e.to_string())?;
-        let uncompressed_size = serialized.len();
+    /// Calculate TF-IDF score for a posting
+    fn calculate_tf_idf_score(&self, posting: &Posting, doc_frequency: u64) -> f64 {
+        let tf = 1.0 + (posting.term_frequency as f64).ln();
+        let idf = (self.get_total_documents() as f64 / doc_frequency as f64).ln();
+        let boost = posting.boost as f64;
         
-        let (compressed_data, compression_type) = match self.config.compression_type {
+        tf * idf * boost
+    }
+
+    /// Get total number of documents
+    fn get_total_documents(&self) -> u64 {
+        self.stats.lock().unwrap().total_documents
+    }
+
+    /// Update index statistics
+    async fn update_stats(&self, new_docs: usize) {
+        let mut stats = self.stats.lock().unwrap();
+        stats.total_documents += new_docs as u64;
+        stats.last_updated = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    }
+
+    /// Get index statistics
+    pub fn get_stats(&self) -> IndexStats {
+        self.stats.lock().unwrap().clone()
+    }
+
+    /// Compress and store index to disk
+    pub async fn persist_index(&self) -> Result<(), String> {
+        let index = self.inverted_index.read().await;
+        let doc_store = self.document_store.read().await;
+        
+        // Create index file path
+        let index_path = self.config.index_directory.join("index.bin");
+        let doc_path = self.config.index_directory.join("documents.bin");
+        
+        // Compress and write inverted index
+        let compressed_index = self.compress_index(&index).await?;
+        std::fs::write(&index_path, compressed_index)
+            .map_err(|e| format!("Failed to write index: {}", e))?;
+        
+        // Compress and write document store
+        let compressed_docs = self.compress_documents(&doc_store).await?;
+        std::fs::write(&doc_path, compressed_docs)
+            .map_err(|e| format!("Failed to write documents: {}", e))?;
+        
+        Ok(())
+    }
+
+    /// Compress index data
+    async fn compress_index(&self, index: &HashMap<String, Vec<Posting>>) -> Result<Vec<u8>, String> {
+        let serialized = bincode::serialize(index)
+            .map_err(|e| format!("Failed to serialize index: {}", e))?;
+        
+        match self.config.compression_type {
             CompressionType::LZ4 => {
                 let compressed = compress(&serialized);
-                (compressed, CompressionType::LZ4)
+                Ok(compressed)
             },
             CompressionType::Brotli => {
                 let mut compressed = Vec::new();
-                let params = BrotliEncoderParams::default();
-                // Simplified brotli compression
-                compressed.extend_from_slice(&serialized);
-                (compressed, CompressionType::Brotli)
+                let mut encoder = CompressorWriter::new(&mut compressed, 4096, &BrotliEncoderParams::default());
+                encoder.write_all(&serialized)
+                    .map_err(|e| format!("Failed to compress with Brotli: {}", e))?;
+                encoder.flush()
+                    .map_err(|e| format!("Failed to flush Brotli encoder: {}", e))?;
+                Ok(compressed)
             },
-            CompressionType::Delta => {
-                let compressed = self.delta_compress(postings)?;
-                (compressed, CompressionType::Delta)
+            CompressionType::Gzip => {
+                let mut compressed = Vec::new();
+                let mut encoder = GzEncoder::new(&mut compressed, Compression::default());
+                encoder.write_all(&serialized)
+                    .map_err(|e| format!("Failed to compress with Gzip: {}", e))?;
+                encoder.finish()
+                    .map_err(|e| format!("Failed to finish Gzip compression: {}", e))?;
+                Ok(compressed)
             },
-            CompressionType::VariableByte => {
-                let compressed = self.variable_byte_compress(postings)?;
-                (compressed, CompressionType::VariableByte)
-            },
-            _ => (serialized, CompressionType::None),
-        };
-        
-        Ok(CompressedPostingList {
-            term: term.to_string(),
-            doc_count: postings.len() as u32,
-            compressed_data,
-            compression_type,
-            uncompressed_size,
-            compressed_size: compressed_data.len(),
-        })
+            _ => Ok(serialized),
+        }
     }
 
-    /// Decompress posting list
-    async fn decompress_postings(&self, compressed_list: &CompressedPostingList) -> Result<Vec<Posting>, String> {
-        let decompressed_data = match compressed_list.compression_type {
+    /// Compress document store
+    async fn compress_documents(&self, docs: &HashMap<String, Document>) -> Result<Vec<u8>, String> {
+        let serialized = bincode::serialize(docs)
+            .map_err(|e| format!("Failed to serialize documents: {}", e))?;
+        
+        match self.config.compression_type {
             CompressionType::LZ4 => {
-                decompress(&compressed_list.compressed_data, compressed_list.uncompressed_size)
-                    .map_err(|e| e.to_string())?
+                let compressed = compress(&serialized);
+                Ok(compressed)
             },
-            CompressionType::Brotli => {
-                // Simplified brotli decompression
-                compressed_list.compressed_data.clone()
+            _ => Ok(serialized),
+        }
+    }
+
+    /// Load index from disk
+    pub async fn load_index(&self) -> Result<(), String> {
+        let index_path = self.config.index_directory.join("index.bin");
+        let doc_path = self.config.index_directory.join("documents.bin");
+        
+        if !index_path.exists() || !doc_path.exists() {
+            return Ok(()); // No existing index to load
+        }
+        
+        // Load and decompress index
+        let compressed_index = std::fs::read(&index_path)
+            .map_err(|e| format!("Failed to read index: {}", e))?;
+        
+        let index: HashMap<String, Vec<Posting>> = self.decompress_index(&compressed_index).await?;
+        
+        // Load and decompress documents
+        let compressed_docs = std::fs::read(&doc_path)
+            .map_err(|e| format!("Failed to read documents: {}", e))?;
+        
+        let docs: HashMap<String, Document> = self.decompress_documents(&compressed_docs).await?;
+        
+        // Update in-memory structures
+        {
+            let mut inverted_index = self.inverted_index.write().await;
+            *inverted_index = index;
+        }
+        
+        {
+            let mut document_store = self.document_store.write().await;
+            *document_store = docs;
+        }
+        
+        Ok(())
+    }
+
+    /// Decompress index data
+    async fn decompress_index(&self, compressed: &[u8]) -> Result<HashMap<String, Vec<Posting>>, String> {
+        let decompressed = match self.config.compression_type {
+            CompressionType::LZ4 => {
+                decompress(compressed)
+                    .map_err(|e| format!("Failed to decompress LZ4: {}", e))?
             },
-            CompressionType::Delta => {
-                self.delta_decompress(&compressed_list.compressed_data)?
-            },
-            CompressionType::VariableByte => {
-                self.variable_byte_decompress(&compressed_list.compressed_data)?
-            },
-            _ => compressed_list.compressed_data.clone(),
+            _ => compressed.to_vec(),
         };
         
-        let postings: Vec<Posting> = bincode::deserialize(&decompressed_data).map_err(|e| e.to_string())?;
-        Ok(postings)
+        bincode::deserialize(&decompressed)
+            .map_err(|e| format!("Failed to deserialize index: {}", e))
     }
 
-    /// Delta compression for posting lists
-    fn delta_compress(&self, postings: &[Posting]) -> Result<Vec<u8>, String> {
-        // Simplified delta compression
-        let mut compressed = Vec::new();
-        for posting in postings {
-            let doc_id_bytes = posting.doc_id.as_bytes();
-            compressed.extend_from_slice(&(doc_id_bytes.len() as u32).to_le_bytes());
-            compressed.extend_from_slice(doc_id_bytes);
-            compressed.extend_from_slice(&posting.term_frequency.to_le_bytes());
+    /// Decompress document store
+    async fn decompress_documents(&self, compressed: &[u8]) -> Result<HashMap<String, Document>, String> {
+        let decompressed = match self.config.compression_type {
+            CompressionType::LZ4 => {
+                decompress(compressed)
+                    .map_err(|e| format!("Failed to decompress LZ4: {}", e))?
+            },
+            _ => compressed.to_vec(),
+        };
+        
+        bincode::deserialize(&decompressed)
+            .map_err(|e| format!("Failed to deserialize documents: {}", e))
+    }
+
+    /// Optimize index by merging and compressing
+    pub async fn optimize_index(&self) -> Result<(), String> {
+        // This would implement index optimization strategies
+        // like merging small segments, removing deleted documents, etc.
+        Ok(())
+    }
+
+    /// Delete document from index
+    pub async fn delete_document(&self, doc_id: &str) -> Result<(), String> {
+        // Remove from document store
+        {
+            let mut doc_store = self.document_store.write().await;
+            doc_store.remove(doc_id);
         }
-        Ok(compressed)
-    }
-
-    /// Delta decompression
-    fn delta_decompress(&self, data: &[u8]) -> Result<Vec<u8>, String> {
-        // Simplified delta decompression
-        Ok(data.to_vec())
-    }
-
-    /// Variable byte compression
-    fn variable_byte_compress(&self, postings: &[Posting]) -> Result<Vec<u8>, String> {
-        // Simplified variable byte compression
-        let mut compressed = Vec::new();
-        for posting in postings {
-            compressed.extend_from_slice(&posting.term_frequency.to_le_bytes());
-        }
-        Ok(compressed)
-    }
-
-    /// Variable byte decompression
-    fn variable_byte_decompress(&self, data: &[u8]) -> Result<Vec<u8>, String> {
-        // Simplified variable byte decompression
-        Ok(data.to_vec())
-    }
-
-    /// Compress all posting lists
-    async fn compress_all_postings(&self) -> Result<(), String> {
-        for shard in self.shards.iter() {
-            let mut shard_guard = shard.write().await;
-            let mut compressed_postings = HashMap::new();
-            
-            for (term, postings) in shard_guard.term_postings.drain() {
-                if postings.len() >= self.config.min_term_frequency as usize {
-                    let compressed = self.compress_postings(&term, &postings).await?;
-                    compressed_postings.insert(term, compressed);
-                }
+        
+        // Remove from inverted index
+        {
+            let mut index = self.inverted_index.write().await;
+            for postings in index.values_mut() {
+                postings.retain(|p| p.doc_id != doc_id);
             }
-            
-            shard_guard.compressed_postings = compressed_postings;
         }
         
         Ok(())
     }
 
-    /// Schedule merge operations
-    async fn schedule_merge_operations(&self) -> Result<(), String> {
-        // Implementation would analyze shard loads and schedule merges
+    /// Get document by ID
+    pub async fn get_document(&self, doc_id: &str) -> Option<Document> {
+        let doc_store = self.document_store.read().await;
+        doc_store.get(doc_id).cloned()
+    }
+
+    /// Clear all indexes
+    pub async fn clear_index(&self) -> Result<(), String> {
+        {
+            let mut index = self.inverted_index.write().await;
+            index.clear();
+        }
+        
+        {
+            let mut doc_store = self.document_store.write().await;
+            doc_store.clear();
+        }
+        
+        {
+            let mut term_dict = self.term_dictionary.write().unwrap();
+            term_dict.clear();
+        }
+        
         Ok(())
-    }
-
-    /// Compression worker
-    async fn compression_worker(
-        compression_manager: Arc<Mutex<CompressionManager>>,
-        shards: Arc<Vec<Arc<AsyncRwLock<IndexShard>>>>,
-    ) {
-        // Implementation would process compression tasks
-    }
-
-    /// Merge worker
-    async fn merge_worker(
-        merge_scheduler: Arc<Mutex<MergeScheduler>>,
-        shards: Arc<Vec<Arc<AsyncRwLock<IndexShard>>>>,
-    ) {
-        // Implementation would process merge tasks
     }
 }
 
-/// Search result
+/// Search result containing document and score
 #[derive(Debug, Clone)]
 pub struct SearchResult {
-    pub doc_id: String,
+    pub document: Document,
     pub score: f64,
-    pub term: String,
-}
-
-impl CompressionManager {
-    fn new() -> Self {
-        Self {
-            compression_stats: HashMap::new(),
-            active_compressions: HashMap::new(),
-        }
-    }
-}
-
-impl ShardManager {
-    fn new(shard_count: usize) -> Self {
-        let mut shard_loads = HashMap::new();
-        for i in 0..shard_count {
-            shard_loads.insert(i, 0.0);
-        }
-        
-        Self {
-            shard_assignments: HashMap::new(),
-            shard_loads,
-            rebalance_threshold: 0.8,
-        }
-    }
-}
-
-impl MergeScheduler {
-    fn new() -> Self {
-        Self {
-            merge_queue: Vec::new(),
-            active_merges: HashMap::new(),
-            merge_stats: MergeStats::default(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -841,32 +594,27 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_advanced_indexing_engine() {
-        let config = IndexingEngineConfig::default();
-        let mut engine = AdvancedIndexingEngine::new(config);
-        engine.start().await.unwrap();
+    async fn test_indexing_engine() {
+        let config = IndexingConfig::default();
+        let engine = AdvancedIndexingEngine::new(config).unwrap();
         
-        let document = IndexDocument {
+        let document = Document {
             id: "doc1".to_string(),
             url: "https://example.com".to_string(),
-            title: "Example Document".to_string(),
-            content: "This is example content".to_string(),
-            timestamp: 1234567890,
+            title: "Test Document".to_string(),
+            content: "This is a test document with some content".to_string(),
+            metadata: HashMap::new(),
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            content_hash: "hash1".to_string(),
             domain: "example.com".to_string(),
             content_type: "text/html".to_string(),
-            size: 1000,
             language: "en".to_string(),
-            metadata: HashMap::new(),
             quality_score: 0.8,
-            freshness_score: 0.9,
         };
         
-        engine.add_document(document).await.unwrap();
+        engine.index_document(document).await.unwrap();
         
-        // Wait for processing
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        
-        let stats = engine.get_index_stats().await.unwrap();
-        assert!(stats.total_documents_indexed > 0);
+        let results = engine.search("test document", 10).await.unwrap();
+        assert!(!results.is_empty());
     }
 }
