@@ -1,0 +1,148 @@
+syntax = "proto3";
+
+package t3ss.search;
+
+option go_package = "github.com/t3ss/shared_libs/proto/search";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
+
+// Search service definition
+service SearchService {
+  // Perform a search query
+  rpc Search(SearchRequest) returns (SearchResponse);
+  
+  // Get search suggestions
+  rpc GetSuggestions(SuggestionsRequest) returns (SuggestionsResponse);
+  
+  // Get autocomplete suggestions
+  rpc GetAutocomplete(AutocompleteRequest) returns (AutocompleteResponse);
+  
+  // Track search analytics
+  rpc TrackClick(ClickTrackingRequest) returns (ClickTrackingResponse);
+  rpc TrackImpression(ImpressionTrackingRequest) returns (ImpressionTrackingResponse);
+  
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Search request
+message SearchRequest {
+  string query = 1;
+  map<string, string> filters = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  string sort_by = 5;
+  string user_id = 6;
+  string session_id = 7;
+  repeated string boost_fields = 8;
+  google.protobuf.Timestamp timestamp = 9;
+}
+
+// Search response
+message SearchResponse {
+  repeated SearchResult results = 1;
+  int64 total = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  double query_time_ms = 5;
+  map<string, google.protobuf.Any> facets = 6;
+  repeated string suggestions = 7;
+  string corrected_query = 8;
+  double confidence_score = 9;
+}
+
+// Individual search result
+message SearchResult {
+  string id = 1;
+  string title = 2;
+  string url = 3;
+  string snippet = 4;
+  double score = 5;
+  map<string, google.protobuf.Any> metadata = 6;
+  repeated string highlights = 7;
+  string content_type = 8;
+  google.protobuf.Timestamp last_updated = 9;
+  double page_rank = 10;
+  repeated string categories = 11;
+}
+
+// Suggestions request
+message SuggestionsRequest {
+  string query = 1;
+  int32 limit = 2;
+  string user_id = 3;
+  string session_id = 4;
+}
+
+// Suggestions response
+message SuggestionsResponse {
+  repeated string suggestions = 1;
+  double confidence = 2;
+  string original_query = 3;
+}
+
+// Autocomplete request
+message AutocompleteRequest {
+  string query = 1;
+  int32 limit = 2;
+  string user_id = 3;
+  string session_id = 4;
+}
+
+// Autocomplete response
+message AutocompleteResponse {
+  repeated string completions = 1;
+  double confidence = 2;
+  string original_query = 3;
+}
+
+// Click tracking request
+message ClickTrackingRequest {
+  string result_id = 1;
+  string query = 2;
+  int32 position = 3;
+  string user_id = 4;
+  string session_id = 5;
+  google.protobuf.Timestamp timestamp = 6;
+  map<string, string> context = 7;
+}
+
+// Click tracking response
+message ClickTrackingResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Impression tracking request
+message ImpressionTrackingRequest {
+  repeated string result_ids = 1;
+  string query = 2;
+  string user_id = 3;
+  string session_id = 4;
+  google.protobuf.Timestamp timestamp = 5;
+  map<string, string> context = 6;
+}
+
+// Impression tracking response
+message ImpressionTrackingResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Health check request
+message HealthCheckRequest {
+  string service = 1;
+}
+
+// Health check response
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}

@@ -1,0 +1,378 @@
+syntax = "proto3";
+
+package t3ss.ranking;
+
+option go_package = "github.com/t3ss/shared_libs/proto/ranking";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
+
+// Ranking service definition
+service RankingService {
+  // Document ranking
+  rpc RankDocuments(RankDocumentsRequest) returns (RankDocumentsResponse);
+  rpc ReRankDocuments(ReRankDocumentsRequest) returns (ReRankDocumentsResponse);
+  
+  // Learning to rank
+  rpc TrainRankingModel(TrainRankingModelRequest) returns (TrainRankingModelResponse);
+  rpc UpdateRankingModel(UpdateRankingModelRequest) returns (UpdateRankingModelResponse);
+  rpc GetRankingModel(GetRankingModelRequest) returns (GetRankingModelResponse);
+  
+  // PageRank operations
+  rpc ComputePageRank(ComputePageRankRequest) returns (ComputePageRankResponse);
+  rpc GetPageRank(GetPageRankRequest) returns (GetPageRankResponse);
+  rpc UpdatePageRank(UpdatePageRankRequest) returns (UpdatePageRankResponse);
+  
+  // Personalization
+  rpc GetPersonalizedRanking(GetPersonalizedRankingRequest) returns (GetPersonalizedRankingResponse);
+  rpc UpdateUserProfile(UpdateUserProfileRequest) returns (UpdateUserProfileResponse);
+  
+  // Feature extraction
+  rpc ExtractFeatures(ExtractFeaturesRequest) returns (ExtractFeaturesResponse);
+  rpc GetFeatureImportance(GetFeatureImportanceRequest) returns (GetFeatureImportanceResponse);
+  
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Document to be ranked
+message Document {
+  string id = 1;
+  string title = 2;
+  string content = 3;
+  string url = 4;
+  double initial_score = 5;
+  map<string, google.protobuf.Any> features = 6;
+  map<string, string> metadata = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  repeated string categories = 10;
+  string language = 11;
+}
+
+// Rank documents request
+message RankDocumentsRequest {
+  repeated Document documents = 1;
+  string query = 2;
+  string user_id = 3;
+  string session_id = 4;
+  string model_name = 5;
+  map<string, string> context = 6;
+  repeated string boost_fields = 7;
+  bool enable_personalization = 8;
+  bool enable_learning = 9;
+}
+
+// Rank documents response
+message RankDocumentsResponse {
+  bool success = 1;
+  string message = 2;
+  repeated RankedDocument ranked_documents = 3;
+  double processing_time_ms = 4;
+  string model_used = 5;
+  map<string, double> feature_weights = 6;
+}
+
+// Ranked document
+message RankedDocument {
+  Document document = 1;
+  double final_score = 2;
+  double relevance_score = 3;
+  double authority_score = 4;
+  double freshness_score = 5;
+  double personalization_score = 6;
+  map<string, double> feature_scores = 7;
+  string explanation = 8;
+  int32 rank = 9;
+}
+
+// Re-rank documents request
+message ReRankDocumentsRequest {
+  repeated RankedDocument documents = 1;
+  string query = 2;
+  string user_id = 3;
+  string model_name = 4;
+  map<string, string> context = 5;
+  bool enable_learning = 6;
+}
+
+// Re-rank documents response
+message ReRankDocumentsResponse {
+  bool success = 1;
+  string message = 2;
+  repeated RankedDocument ranked_documents = 3;
+  double processing_time_ms = 4;
+  string model_used = 5;
+}
+
+// Train ranking model request
+message TrainRankingModelRequest {
+  string model_name = 1;
+  repeated TrainingExample examples = 2;
+  ModelConfig config = 3;
+  string algorithm = 4; // "neural_network", "gradient_boosting", "linear", etc.
+  map<string, string> hyperparameters = 5;
+  bool cross_validate = 6;
+  int32 validation_split = 7;
+}
+
+// Training example
+message TrainingExample {
+  repeated double features = 1;
+  double relevance_score = 2;
+  string query = 3;
+  string document_id = 4;
+  string user_id = 5;
+  map<string, string> context = 6;
+  int32 position = 7;
+  bool clicked = 8;
+  double dwell_time = 9;
+}
+
+// Model configuration
+message ModelConfig {
+  int32 max_features = 1;
+  int32 hidden_layers = 2;
+  repeated int32 layer_sizes = 3;
+  double learning_rate = 4;
+  int32 epochs = 5;
+  double regularization = 6;
+  string activation_function = 7;
+  string optimizer = 8;
+  int32 batch_size = 9;
+  double dropout_rate = 10;
+}
+
+// Train ranking model response
+message TrainRankingModelResponse {
+  bool success = 1;
+  string message = 2;
+  string model_id = 3;
+  double training_accuracy = 4;
+  double validation_accuracy = 5;
+  double training_loss = 6;
+  double validation_loss = 7;
+  int32 training_examples = 8;
+  google.protobuf.Timestamp trained_at = 9;
+  map<string, double> feature_importance = 10;
+}
+
+// Update ranking model request
+message UpdateRankingModelRequest {
+  string model_name = 1;
+  repeated TrainingExample examples = 2;
+  bool incremental = 3;
+  double learning_rate = 4;
+  int32 batch_size = 5;
+}
+
+// Update ranking model response
+message UpdateRankingModelResponse {
+  bool success = 1;
+  string message = 2;
+  double updated_accuracy = 3;
+  int32 new_examples = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// Get ranking model request
+message GetRankingModelRequest {
+  string model_name = 1;
+  bool include_weights = 2;
+}
+
+// Get ranking model response
+message GetRankingModelResponse {
+  bool success = 1;
+  string message = 2;
+  RankingModel model = 3;
+}
+
+// Ranking model
+message RankingModel {
+  string name = 1;
+  string algorithm = 2;
+  ModelConfig config = 3;
+  double accuracy = 4;
+  double precision = 5;
+  double recall = 6;
+  double f1_score = 7;
+  int64 training_examples = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp last_updated = 10;
+  map<string, double> feature_weights = 11;
+  string status = 12; // "training", "ready", "error"
+}
+
+// Compute PageRank request
+message ComputePageRankRequest {
+  repeated Link links = 1;
+  double damping_factor = 2;
+  double convergence_threshold = 3;
+  int32 max_iterations = 4;
+  bool enable_parallel = 5;
+  string algorithm = 6; // "classic", "topic_sensitive", "personalized"
+  map<string, double> topic_weights = 7;
+  string user_id = 8;
+}
+
+// Link between pages
+message Link {
+  string from_url = 1;
+  string to_url = 2;
+  double weight = 3;
+  string anchor_text = 4;
+  string link_type = 5; // "internal", "external", "navigational", "content"
+  google.protobuf.Timestamp discovered_at = 6;
+}
+
+// Compute PageRank response
+message ComputePageRankResponse {
+  bool success = 1;
+  string message = 2;
+  repeated PageRankResult results = 3;
+  int32 iterations = 4;
+  bool converged = 5;
+  double computation_time_ms = 6;
+}
+
+// PageRank result
+message PageRankResult {
+  string url = 1;
+  double page_rank = 2;
+  int32 in_links = 3;
+  int32 out_links = 4;
+  double authority_score = 5;
+  double hub_score = 6;
+}
+
+// Get PageRank request
+message GetPageRankRequest {
+  string url = 1;
+  string user_id = 2;
+}
+
+// Get PageRank response
+message GetPageRankResponse {
+  bool success = 1;
+  string message = 2;
+  PageRankResult result = 3;
+}
+
+// Update PageRank request
+message UpdatePageRankRequest {
+  repeated Link new_links = 1;
+  repeated string removed_links = 2;
+  bool incremental = 3;
+}
+
+// Update PageRank response
+message UpdatePageRankResponse {
+  bool success = 1;
+  string message = 2;
+  int32 updated_pages = 3;
+  double computation_time_ms = 4;
+}
+
+// Get personalized ranking request
+message GetPersonalizedRankingRequest {
+  string user_id = 1;
+  repeated Document documents = 2;
+  string query = 3;
+  string session_id = 4;
+  map<string, string> context = 5;
+}
+
+// Get personalized ranking response
+message GetPersonalizedRankingResponse {
+  bool success = 1;
+  string message = 2;
+  repeated RankedDocument ranked_documents = 3;
+  UserProfile user_profile = 4;
+  double personalization_strength = 5;
+}
+
+// User profile for personalization
+message UserProfile {
+  string user_id = 1;
+  repeated string interests = 2;
+  repeated string preferred_categories = 3;
+  map<string, double> topic_preferences = 4;
+  repeated string clicked_documents = 5;
+  repeated string search_history = 6;
+  string location = 7;
+  string language = 8;
+  google.protobuf.Timestamp last_updated = 9;
+  map<string, string> metadata = 10;
+}
+
+// Update user profile request
+message UpdateUserProfileRequest {
+  string user_id = 1;
+  UserProfile profile = 2;
+  bool merge = 3;
+}
+
+// Update user profile response
+message UpdateUserProfileResponse {
+  bool success = 1;
+  string message = 2;
+  UserProfile updated_profile = 3;
+}
+
+// Extract features request
+message ExtractFeaturesRequest {
+  repeated Document documents = 1;
+  string query = 2;
+  string user_id = 3;
+  bool include_text_features = 4;
+  bool include_link_features = 5;
+  bool include_user_features = 6;
+  bool include_temporal_features = 7;
+}
+
+// Extract features response
+message ExtractFeaturesResponse {
+  bool success = 1;
+  string message = 2;
+  repeated FeatureVector feature_vectors = 3;
+  map<string, double> feature_importance = 4;
+}
+
+// Feature vector
+message FeatureVector {
+  string document_id = 1;
+  map<string, double> features = 2;
+  repeated string feature_names = 3;
+  double vector_norm = 4;
+}
+
+// Get feature importance request
+message GetFeatureImportanceRequest {
+  string model_name = 1;
+  string feature_type = 2;
+}
+
+// Get feature importance response
+message GetFeatureImportanceResponse {
+  bool success = 1;
+  string message = 2;
+  map<string, double> feature_importance = 3;
+  repeated string top_features = 4;
+}
+
+// Health check
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}

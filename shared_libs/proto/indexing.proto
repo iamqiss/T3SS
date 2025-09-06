@@ -1,0 +1,377 @@
+syntax = "proto3";
+
+package t3ss.indexing;
+
+option go_package = "github.com/t3ss/shared_libs/proto/indexing";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
+
+// Indexing service definition
+service IndexingService {
+  // Document operations
+  rpc IndexDocument(IndexDocumentRequest) returns (IndexDocumentResponse);
+  rpc UpdateDocument(UpdateDocumentRequest) returns (UpdateDocumentResponse);
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
+  rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
+  
+  // Batch operations
+  rpc BatchIndex(BatchIndexRequest) returns (BatchIndexResponse);
+  rpc BatchUpdate(BatchUpdateRequest) returns (BatchUpdateResponse);
+  rpc BatchDelete(BatchDeleteRequest) returns (BatchDeleteResponse);
+  
+  // Index management
+  rpc CreateIndex(CreateIndexRequest) returns (CreateIndexResponse);
+  rpc DeleteIndex(DeleteIndexRequest) returns (DeleteIndexResponse);
+  rpc GetIndexInfo(GetIndexInfoRequest) returns (GetIndexInfoResponse);
+  rpc ListIndexes(ListIndexesRequest) returns (ListIndexesResponse);
+  
+  // Search within index
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc SearchByField(SearchByFieldRequest) returns (SearchByFieldResponse);
+  
+  // Index statistics
+  rpc GetIndexStats(GetIndexStatsRequest) returns (GetIndexStatsResponse);
+  rpc GetDocumentStats(GetDocumentStatsRequest) returns (GetDocumentStatsResponse);
+  
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Document representation
+message Document {
+  string id = 1;
+  string title = 2;
+  string content = 3;
+  string url = 4;
+  string content_type = 5;
+  map<string, google.protobuf.Any> fields = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+  google.protobuf.Timestamp indexed_at = 9;
+  double score = 10;
+  repeated string categories = 11;
+  map<string, string> metadata = 12;
+  string language = 13;
+  repeated string tags = 14;
+}
+
+// Index document request
+message IndexDocumentRequest {
+  Document document = 1;
+  string index_name = 2;
+  bool overwrite = 3;
+  bool wait_for_refresh = 4;
+  map<string, string> options = 5;
+}
+
+// Index document response
+message IndexDocumentResponse {
+  bool success = 1;
+  string message = 2;
+  string document_id = 3;
+  string version = 4;
+  google.protobuf.Timestamp indexed_at = 5;
+}
+
+// Update document request
+message UpdateDocumentRequest {
+  string document_id = 1;
+  Document document = 2;
+  string index_name = 3;
+  bool wait_for_refresh = 4;
+  map<string, string> options = 5;
+}
+
+// Update document response
+message UpdateDocumentResponse {
+  bool success = 1;
+  string message = 2;
+  string version = 3;
+  google.protobuf.Timestamp updated_at = 4;
+}
+
+// Delete document request
+message DeleteDocumentRequest {
+  string document_id = 1;
+  string index_name = 2;
+  bool wait_for_refresh = 3;
+}
+
+// Delete document response
+message DeleteDocumentResponse {
+  bool success = 1;
+  string message = 2;
+  google.protobuf.Timestamp deleted_at = 3;
+}
+
+// Get document request
+message GetDocumentRequest {
+  string document_id = 1;
+  string index_name = 2;
+  repeated string fields = 3;
+}
+
+// Get document response
+message GetDocumentResponse {
+  bool success = 1;
+  string message = 2;
+  Document document = 3;
+  bool found = 4;
+}
+
+// Batch index request
+message BatchIndexRequest {
+  repeated Document documents = 1;
+  string index_name = 2;
+  bool overwrite = 3;
+  bool wait_for_refresh = 4;
+  int32 batch_size = 5;
+}
+
+// Batch index response
+message BatchIndexResponse {
+  bool success = 1;
+  string message = 2;
+  int32 indexed_count = 3;
+  int32 failed_count = 4;
+  repeated string failed_document_ids = 5;
+  google.protobuf.Timestamp completed_at = 6;
+}
+
+// Batch update request
+message BatchUpdateRequest {
+  repeated Document documents = 1;
+  string index_name = 2;
+  bool wait_for_refresh = 3;
+  int32 batch_size = 4;
+}
+
+// Batch update response
+message BatchUpdateResponse {
+  bool success = 1;
+  string message = 2;
+  int32 updated_count = 3;
+  int32 failed_count = 4;
+  repeated string failed_document_ids = 5;
+  google.protobuf.Timestamp completed_at = 6;
+}
+
+// Batch delete request
+message BatchDeleteRequest {
+  repeated string document_ids = 1;
+  string index_name = 2;
+  bool wait_for_refresh = 3;
+  int32 batch_size = 4;
+}
+
+// Batch delete response
+message BatchDeleteResponse {
+  bool success = 1;
+  string message = 2;
+  int32 deleted_count = 3;
+  int32 failed_count = 4;
+  repeated string failed_document_ids = 5;
+  google.protobuf.Timestamp completed_at = 6;
+}
+
+// Create index request
+message CreateIndexRequest {
+  string index_name = 1;
+  IndexSettings settings = 2;
+  map<string, FieldMapping> mappings = 3;
+  map<string, string> options = 4;
+}
+
+// Create index response
+message CreateIndexResponse {
+  bool success = 1;
+  string message = 2;
+  string index_name = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+// Index settings
+message IndexSettings {
+  int32 number_of_shards = 1;
+  int32 number_of_replicas = 2;
+  string refresh_interval = 3;
+  int64 max_result_window = 4;
+  map<string, string> analysis = 5;
+  map<string, google.protobuf.Any> other_settings = 6;
+}
+
+// Field mapping
+message FieldMapping {
+  string type = 1;
+  bool index = 2;
+  bool store = 3;
+  string analyzer = 4;
+  string search_analyzer = 5;
+  map<string, google.protobuf.Any> properties = 6;
+}
+
+// Delete index request
+message DeleteIndexRequest {
+  string index_name = 1;
+  bool force = 2;
+}
+
+// Delete index response
+message DeleteIndexResponse {
+  bool success = 1;
+  string message = 2;
+  google.protobuf.Timestamp deleted_at = 3;
+}
+
+// Get index info request
+message GetIndexInfoRequest {
+  string index_name = 1;
+}
+
+// Get index info response
+message GetIndexInfoResponse {
+  bool success = 1;
+  string message = 2;
+  IndexInfo index_info = 3;
+}
+
+// Index information
+message IndexInfo {
+  string name = 1;
+  int64 document_count = 2;
+  int64 size_bytes = 3;
+  IndexSettings settings = 4;
+  map<string, FieldMapping> mappings = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp last_updated = 7;
+  repeated string aliases = 8;
+}
+
+// List indexes request
+message ListIndexesRequest {
+  string pattern = 1;
+  bool include_stats = 2;
+}
+
+// List indexes response
+message ListIndexesResponse {
+  bool success = 1;
+  string message = 2;
+  repeated IndexInfo indexes = 3;
+}
+
+// Search request
+message SearchRequest {
+  string query = 1;
+  string index_name = 2;
+  int32 from = 3;
+  int32 size = 4;
+  repeated string fields = 5;
+  map<string, string> filters = 6;
+  repeated string sort_fields = 7;
+  map<string, double> boost_fields = 8;
+  bool highlight = 9;
+  int32 highlight_size = 10;
+  string user_id = 11;
+}
+
+// Search response
+message SearchResponse {
+  bool success = 1;
+  string message = 2;
+  repeated Document documents = 3;
+  int64 total = 4;
+  int32 from = 5;
+  int32 size = 6;
+  double max_score = 7;
+  double took_ms = 8;
+  map<string, google.protobuf.Any> aggregations = 9;
+  repeated string suggestions = 10;
+}
+
+// Search by field request
+message SearchByFieldRequest {
+  string field = 1;
+  string value = 2;
+  string index_name = 3;
+  int32 from = 4;
+  int32 size = 5;
+  repeated string fields = 6;
+  map<string, string> filters = 7;
+}
+
+// Search by field response
+message SearchByFieldResponse {
+  bool success = 1;
+  string message = 2;
+  repeated Document documents = 3;
+  int64 total = 4;
+  double took_ms = 5;
+}
+
+// Get index stats request
+message GetIndexStatsRequest {
+  string index_name = 1;
+}
+
+// Get index stats response
+message GetIndexStatsResponse {
+  bool success = 1;
+  string message = 2;
+  IndexStats stats = 3;
+}
+
+// Index statistics
+message IndexStats {
+  string index_name = 1;
+  int64 document_count = 2;
+  int64 size_bytes = 3;
+  int64 total_searches = 4;
+  double avg_search_time_ms = 5;
+  int64 total_indexes = 6;
+  double avg_index_time_ms = 7;
+  google.protobuf.Timestamp last_activity = 8;
+  map<string, int64> field_stats = 9;
+}
+
+// Get document stats request
+message GetDocumentStatsRequest {
+  string index_name = 1;
+  string document_id = 2;
+}
+
+// Get document stats response
+message GetDocumentStatsResponse {
+  bool success = 1;
+  string message = 2;
+  DocumentStats stats = 3;
+}
+
+// Document statistics
+message DocumentStats {
+  string document_id = 1;
+  int64 size_bytes = 2;
+  int32 field_count = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp last_updated = 5;
+  int64 access_count = 6;
+  double relevance_score = 7;
+  map<string, int32> field_lengths = 8;
+}
+
+// Health check
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}
