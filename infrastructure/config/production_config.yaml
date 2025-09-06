@@ -1,0 +1,303 @@
+# T3SS Production Configuration
+# (c) 2025 Qiss Labs. All Rights Reserved.
+
+# API Gateway Configuration
+api_gateway:
+  server:
+    host: "0.0.0.0"
+    port: 8080
+    read_timeout: "30s"
+    write_timeout: "30s"
+    idle_timeout: "120s"
+  
+  rate_limit:
+    enabled: true
+    requests_per_minute: 1000
+    burst_size: 100
+    cleanup_interval: "5m"
+  
+  caching:
+    enabled: true
+    redis_endpoint: "redis://redis-cluster:6379"
+    default_ttl: "1h"
+    max_cache_size: 1073741824  # 1GB
+  
+  security:
+    enable_https: true
+    cert_file: "/etc/ssl/certs/t3ss.crt"
+    key_file: "/etc/ssl/private/t3ss.key"
+    enable_cors: true
+    allowed_origins:
+      - "https://search.t3ss.com"
+      - "https://api.t3ss.com"
+    enable_api_key: true
+    api_key_header: "X-API-Key"
+  
+  services:
+    search_service_url: "http://search-service:8080"
+    index_service_url: "http://index-service:8080"
+    ranking_service_url: "http://ranking-service:8080"
+    timeout: "10s"
+  
+  monitoring:
+    enable_metrics: true
+    metrics_port: 9090
+    enable_health_check: true
+    health_check_path: "/health"
+
+# Distributed Crawler Configuration
+distributed_crawler:
+  node_id: "${NODE_ID}"
+  etcd_endpoints:
+    - "etcd-1:2379"
+    - "etcd-2:2379"
+    - "etcd-3:2379"
+  redis_endpoint: "redis://redis-cluster:6379"
+  max_concurrent_nodes: 10
+  max_concurrent_crawls: 100
+  crawl_delay: "1s"
+  max_pages_per_domain: 10000
+  max_depth: 5
+  batch_size: 1000
+  queue_buffer_size: 10000
+  heartbeat_interval: "5s"
+  min_content_length: 100
+  max_content_length: 10485760  # 10MB
+  allowed_content_types:
+    - "text/html"
+    - "text/plain"
+    - "application/pdf"
+    - "application/json"
+
+# PageRank Engine Configuration
+pagerank_engine:
+  damping_factor: 0.85
+  convergence_threshold: 1e-6
+  max_iterations: 100
+  enable_parallel: true
+  enable_adaptive_damping: true
+  enable_topic_sensitive: true
+  enable_personalized: true
+  batch_size: 1000
+
+# Query Processor Configuration
+query_processor:
+  enable_spell_correction: true
+  enable_query_expansion: true
+  enable_intent_classification: true
+  enable_entity_recognition: true
+  enable_synonym_expansion: true
+  enable_related_terms: true
+  max_expansion_terms: 10
+  confidence_threshold: 0.7
+  enable_parallel_processing: true
+  cache_size: 10000
+  enable_query_logging: true
+
+# Distributed Storage Configuration
+distributed_storage:
+  replication_factor: 3
+  default_consistency_level: "quorum"
+  heartbeat_interval: "5s"
+  failure_detection_timeout: "30s"
+  max_value_size: 10485760  # 10MB
+  enable_compression: true
+  enable_encryption: false
+  compression_level: 6
+  enable_sharding: true
+  shard_count: 16
+  enable_auto_rebalancing: true
+  enable_quorum_reads: true
+  enable_quorum_writes: true
+
+# Advanced Indexing Engine Configuration
+indexing_engine:
+  max_documents: 100000000  # 100M documents
+  batch_size: 1000
+  enable_compression: true
+  compression_type: "lz4"
+  compression_level: 6
+  enable_sharding: true
+  shard_count: 32
+  enable_parallel_processing: true
+  max_term_length: 50
+  min_term_frequency: 1
+  field_weights:
+    title: 3.0
+    content: 1.0
+    url: 2.0
+    metadata: 1.5
+  enable_semantic_indexing: true
+  enable_position_indexing: true
+  enable_proximity_scoring: true
+  index_file_path: "/data/index"
+  enable_memory_mapping: true
+  memory_limit: 4294967296  # 4GB
+  enable_incremental_indexing: true
+  merge_threshold: 10000
+
+# Metrics Collector Configuration
+metrics_collector:
+  collection_interval: "10s"
+  retention_period: "1h"
+  max_metrics_per_type: 10000
+  enable_aggregation: true
+  enable_anomaly_detection: true
+  enable_alerting: true
+  alert_thresholds:
+    cpu_usage: 80.0
+    memory_usage: 85.0
+    disk_usage: 90.0
+    response_time: 1000.0
+    error_rate: 0.05
+  export_formats:
+    - "prometheus"
+    - "json"
+    - "influxdb"
+  enable_real_time_streaming: true
+  buffer_size: 1000
+
+# Database Configuration
+databases:
+  postgresql:
+    host: "postgres-cluster"
+    port: 5432
+    database: "t3ss"
+    username: "${DB_USERNAME}"
+    password: "${DB_PASSWORD}"
+    max_connections: 100
+    connection_timeout: "30s"
+    enable_ssl: true
+  
+  redis:
+    cluster_endpoints:
+      - "redis-1:6379"
+      - "redis-2:6379"
+      - "redis-3:6379"
+    password: "${REDIS_PASSWORD}"
+    max_connections: 200
+    connection_timeout: "5s"
+    enable_cluster: true
+  
+  elasticsearch:
+    cluster_endpoints:
+      - "elasticsearch-1:9200"
+      - "elasticsearch-2:9200"
+      - "elasticsearch-3:9200"
+    username: "${ES_USERNAME}"
+    password: "${ES_PASSWORD}"
+    max_connections: 50
+    connection_timeout: "10s"
+    enable_ssl: true
+
+# Machine Learning Configuration
+machine_learning:
+  models:
+    intent_classification:
+      model_path: "/models/intent_classifier.bin"
+      version: "1.0.0"
+      enable_gpu: true
+    
+    entity_recognition:
+      model_path: "/models/ner_model.bin"
+      version: "1.0.0"
+      enable_gpu: true
+    
+    semantic_search:
+      model_path: "/models/semantic_encoder.bin"
+      version: "1.0.0"
+      enable_gpu: true
+      embedding_dimension: 768
+  
+  training:
+    enable_online_learning: true
+    batch_size: 32
+    learning_rate: 0.001
+    max_epochs: 100
+    validation_split: 0.2
+
+# Logging Configuration
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+  enable_structured_logging: true
+  enable_request_logging: true
+  enable_performance_logging: true
+  log_rotation:
+    enabled: true
+    max_size: "100MB"
+    max_files: 10
+    max_age: "7d"
+
+# Security Configuration
+security:
+  enable_authentication: true
+  enable_authorization: true
+  jwt_secret: "${JWT_SECRET}"
+  jwt_expiry: "24h"
+  enable_rate_limiting: true
+  enable_ddos_protection: true
+  enable_ip_whitelisting: false
+  allowed_ips: []
+  enable_audit_logging: true
+
+# Performance Configuration
+performance:
+  enable_connection_pooling: true
+  max_connections_per_service: 100
+  connection_timeout: "30s"
+  read_timeout: "60s"
+  write_timeout: "60s"
+  enable_keep_alive: true
+  keep_alive_timeout: "300s"
+  enable_compression: true
+  compression_level: 6
+  enable_caching: true
+  cache_ttl: "1h"
+
+# Monitoring and Observability
+observability:
+  enable_tracing: true
+  tracing_endpoint: "jaeger:14268"
+  enable_metrics: true
+  metrics_endpoint: "prometheus:9090"
+  enable_logging: true
+  logging_endpoint: "elasticsearch:9200"
+  enable_health_checks: true
+  health_check_interval: "30s"
+  enable_alerting: true
+  alert_endpoints:
+    - "slack://webhook-url"
+    - "email://smtp-server"
+    - "webhook://alertmanager"
+
+# Backup and Recovery
+backup:
+  enable_automated_backups: true
+  backup_interval: "24h"
+  backup_retention: "30d"
+  backup_location: "s3://t3ss-backups"
+  enable_incremental_backups: true
+  enable_encryption: true
+  encryption_key: "${BACKUP_ENCRYPTION_KEY}"
+
+# Disaster Recovery
+disaster_recovery:
+  enable_cross_region_replication: true
+  replication_regions:
+    - "us-east-1"
+    - "us-west-2"
+    - "eu-west-1"
+  replication_lag_threshold: "5m"
+  enable_automatic_failover: true
+  failover_timeout: "30s"
+
+# Environment Variables
+environment:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  DEBUG: "false"
+  ENABLE_PROFILING: "false"
+  ENABLE_METRICS: "true"
+  ENABLE_TRACING: "true"
